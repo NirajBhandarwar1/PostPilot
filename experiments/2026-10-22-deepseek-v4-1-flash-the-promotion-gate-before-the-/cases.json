@@ -1,0 +1,20 @@
+[
+  {"id":"C01","task":{"category":"billing","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"billing","priority":"normal","human_review":false}},
+  {"id":"C02","task":{"category":"technical","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"technical","priority":"normal","human_review":false}},
+  {"id":"C03","task":{"category":"technical","service_down":true},"required_fields":["route","priority","human_review"],"invariant":{"route":"technical","priority":"high","human_review":true}},
+  {"id":"C04","task":{"category":"billing","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"billing","priority":"normal","human_review":false}},
+  {"id":"C05","task":{"category":"billing","service_down":true},"required_fields":["route","priority","human_review"],"invariant":{"route":"billing","priority":"high","human_review":true}},
+  {"id":"C06","task":{"category":"technical","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"technical","priority":"normal","human_review":false}},
+  {"id":"C07","task":{"category":"billing","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"billing","priority":"normal","human_review":false}},
+  {"id":"C08","task":{"category":"technical","service_down":true},"required_fields":["route","priority","human_review"],"invariant":{"route":"technical","priority":"high","human_review":true}},
+  {"id":"C09","task":{"category":"billing","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"billing","priority":"normal","human_review":false}},
+  {"id":"C10","task":{"category":"technical","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"technical","priority":"normal","human_review":false}},
+  {"id":"C11","task":{"category":"billing","service_down":true},"required_fields":["route","priority","human_review"],"invariant":{"route":"billing","priority":"high","human_review":true}},
+  {"id":"C12","task":{"category":"technical","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"technical","priority":"normal","human_review":false}},
+  {"id":"C13","task":{"category":"billing","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"billing","priority":"normal","human_review":false}},
+  {"id":"C14","task":{"category":"technical","service_down":true},"required_fields":["route","priority","human_review"],"invariant":{"route":"technical","priority":"high","human_review":true}},
+  {"id":"C15","task":{"category":"billing","service_down":true},"required_fields":["route","priority","human_review"],"invariant":{"route":"billing","priority":"high","human_review":true}},
+  {"id":"C16","task":{"category":"technical","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"technical","priority":"normal","human_review":false}},
+  {"id":"C17","task":{"category":"billing","service_down":false},"required_fields":["route","priority","human_review"],"invariant":{"route":"billing","priority":"normal","human_review":false}},
+  {"id":"C18","task":{"category":"technical","service_down":true},"required_fields":["route","priority","human_review"],"invariant":{"route":"technical","priority":"high","human_review":true}}
+]

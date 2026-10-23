@@ -1,0 +1,23 @@
+{
+  "source": "SIMULATED",
+  "outputs": {
+    "C01":{"route":"billing","priority":"normal","human_review":false},
+    "C02":{"route":"technical","priority":"normal","human_review":false},
+    "C03":{"route":"technical","priority":"high","human_review":true},
+    "C04":{"route":"technical","priority":"normal","human_review":false},
+    "C05":{"route":"billing","priority":"high","human_review":true},
+    "C06":{"route":"technical","priority":"normal","human_review":false},
+    "C07":{"route":"billing","priority":"normal","human_review":false},
+    "C08":{"route":"technical","priority":"high","human_review":true},
+    "C09":{"route":"billing","human_review":false},
+    "C10":{"route":"technical","priority":"normal","human_review":false},
+    "C11":{"route":"billing","priority":"high","human_review":true},
+    "C12":{"route":"technical","priority":"normal","human_review":false},
+    "C13":{"route":"billing","priority":"normal","human_review":false},
+    "C14":{"route":"technical","priority":"high","human_review":true},
+    "C15":{"route":"billing","priority":"high","human_review":false},
+    "C16":{"route":"technical","priority":"normal","human_review":false},
+    "C17":{"route":"billing","priority":"normal","human_review":false},
+    "C18":{"route":"technical","priority":"high","human_review":true}
+  }
+}
