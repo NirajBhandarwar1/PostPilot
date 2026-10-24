@@ -1,6 +1,6 @@
 """Email cleanups: model mentions by id, rounded numbers, no hyphen breaks."""
 
-from postpilot import factgate as fg, pipeline
+from postpilot import factgate as fg, pipeline, render
 
 
 def test_model_mention_covered_by_provider_id():
@@ -18,6 +18,6 @@ def test_rounded_numbers_with_hedge_are_supported():
 
 
 def test_wrap_keeps_ids_whole():
-    lines = pipeline._wrap("You need", "A documented model connection for openrouter:cohere/north-mini-code:free "
+    lines = render._wrap("You need", "A documented model connection for openrouter:cohere/north-mini-code:free "
                                        "and an OpenRouter API key " * 2)
     assert any("north-mini-code:free" in ln for ln in lines)

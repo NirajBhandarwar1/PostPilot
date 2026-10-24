@@ -229,7 +229,7 @@ def test_good_idea_passes(catalog):
 
 def test_unknown_model_id_fails(catalog):
     v = fg.check_idea(idea(models_to_run=["groq:llama-3.3-70b-versatile"]), TOPIC, SIGNALS, catalog)
-    assert not v.ok and "not in a free model catalog" in v.reasons[0]
+    assert not v.ok and "not in a model catalog" in v.reasons[0]
 
 
 def test_run_lane_without_models_fails(catalog):

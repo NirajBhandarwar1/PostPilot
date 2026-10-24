@@ -2,7 +2,7 @@
 
 import json
 
-from postpilot import research
+from postpilot import sources as research
 
 YT = """<html><script>var ytInitialData = {"contents": {"x": [
  {"videoRenderer": {"videoId": "abc", "title": {"runs": [{"text": "How To Use REA To Clone Any Software"}]},
@@ -44,7 +44,7 @@ def test_research_parses_and_filters():
     assert [g["title"].split(":")[0] for g in r["repos"]] == ["aicodeking/leanrea"]   # no original, no mirror
     assert [h["points"] for h in r["hn"]] == [814]                      # "Reasoning" is not "rea"
     assert r["linkedin"] == [] and r["x"] == [] and r["web"] == []
-    text = research.as_text(r)
+    text = research.research_digest(r)
     assert "494,444 views: The Fastest-Rising Repo on GitHub" in text and "1,519 stars" in text
 
 

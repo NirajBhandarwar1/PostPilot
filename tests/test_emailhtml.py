@@ -1,6 +1,6 @@
 """HTML emails: safe (escaped), readable (badges, labels), links clickable."""
 
-from postpilot import emailhtml
+from postpilot import render as emailhtml
 
 IDEAS = """PostPilot #9: what's hot in AI, 23 Oct 2026
 Reply with a number (1-2) to get build options for it, or 'skip'.
