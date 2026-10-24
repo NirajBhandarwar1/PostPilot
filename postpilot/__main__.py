@@ -72,6 +72,14 @@ def doctor() -> int:
             print(f"FAIL {fn.__name__:20}   error: {str(e)[:80]}")
             broken += 1
     print("\nAll sources returning data." if not broken else f"\n{broken} source(s) need attention.")
+    # D21: a backup writer is only useful if it really answers strict JSON today.
+    backups = llm.providers("writer")[1:]
+    if backups:
+        print("\nBackup writers (one tiny test call each):")
+        for p in backups:
+            result = llm.probe(p.name)
+            print(f"{'OK ' if result == 'ok' else 'FAIL'} {p.name:12} {result}")
+            broken += 0 if result == "ok" else 1
     return 1 if broken else 0
 
 
@@ -96,40 +104,54 @@ def main() -> None:
     op.add_argument("batch", type=int)
     op.add_argument("choice", type=int)
     op.add_argument("--no-email", action="store_true")
+    op.add_argument("--fresh", action="store_true", help="make a new options list instead of resending the saved one")
     sub.add_parser("check")
     sub.add_parser("status")
     sub.add_parser("test-email")
     pc = sub.add_parser("precommit")
     pc.add_argument("paths", nargs="*")
     ev = sub.add_parser("eval")
-    ev.add_argument("n", nargs="?", type=int, default=3)
+    ev.add_argument("n", nargs="?", type=int)
+    ev.add_argument("--builds", action="store_true",
+                    help="re-run saved stories through options, BUILD.md and post (GPT-6, max 60k tokens)")
     sub.add_parser("doctor")
     po = sub.add_parser("posted")
     po.add_argument("batch", type=int)
     po.add_argument("url")
+    po.add_argument("--build", type=int, help="which build of the batch you posted (default: the latest; "
+                                               "BUILD.md's 'After you post' shows the number)")
     ib = sub.add_parser("inbound")
     ib.add_argument("batch", type=int)
     ib.add_argument("--recruiters", type=int, default=0)
     ib.add_argument("--founders", type=int, default=0)
     ib.add_argument("--other", type=int, default=0)
+    ib.add_argument("--build", type=int, help="which build (default: the one you recorded as posted)")
     st = sub.add_parser("stats")
     st.add_argument("batch", type=int)
     for f in ("impressions", "reactions", "comments", "profile-views"):
         st.add_argument(f"--{f}", type=int)
+    st.add_argument("--build", type=int, help="which build (default: the one you recorded as posted)")
     bl = sub.add_parser("baseline")
     for f in ("profile-views", "followers", "recruiter-msgs"):
         bl.add_argument(f"--{f}", type=int, required=True)
     sub.add_parser("report")
     args = ap.parse_args()
+    try:
+        _run(args)
+    except ValueError as e:              # bad batch / idea / option / --build number
+        sys.exit(str(e))
 
+
+def _run(args) -> None:
     if args.cmd == "run":
         pipeline.run_forever()
     elif args.cmd == "scout":
         pipeline.scout(send_email=not args.no_email)
     elif args.cmd == "build":
-        print(pipeline.build(args.batch, args.choice, send_email=not args.no_email, option=args.option))
+        print(pipeline.build(args.batch, args.choice, send_email=not args.no_email, option=args.option,
+                             reuse=False))
     elif args.cmd == "options":
-        pipeline.propose(args.batch, args.choice, send_email=not args.no_email)
+        pipeline.propose(args.batch, args.choice, send_email=not args.no_email, fresh=args.fresh)
     elif args.cmd == "check":
         pipeline.check_replies()
     elif args.cmd == "status":
@@ -138,25 +160,31 @@ def main() -> None:
         from . import precommit
         sys.exit(precommit.run(args.paths or None))
     elif args.cmd == "eval":
-        pipeline.replay(args.n)
+        if args.builds:
+            pipeline.eval_builds(args.n or 2)
+        else:
+            pipeline.replay(args.n or 3)
     elif args.cmd == "doctor":
         sys.exit(doctor())
     elif args.cmd == "posted":
         _need_batch(args.batch)
-        db.set_outcome(args.batch, posted_url=args.url, posted_at=db.now_iso())
+        n = db.set_outcome(args.batch, args.build, posted_url=args.url, posted_at=db.now_iso())
         db.update_batch(args.batch, status="posted")
-        print(f"Recorded post for batch #{args.batch}. Log replies later with `postpilot inbound {args.batch} ...`")
+        print(f"Recorded post for batch #{args.batch}, build {n}. "
+              f"Log replies later with `postpilot inbound {args.batch} ...`")
     elif args.cmd == "inbound":
         _need_batch(args.batch)
-        db.set_outcome(args.batch, recruiters=args.recruiters, founders=args.founders, other=args.other)
-        print(f"Batch #{args.batch}: {args.recruiters} recruiters, {args.founders} founders, {args.other} other.")
+        n = db.set_outcome(args.batch, args.build, recruiters=args.recruiters, founders=args.founders,
+                           other=args.other)
+        print(f"Batch #{args.batch}, build {n}: {args.recruiters} recruiters, {args.founders} founders, "
+              f"{args.other} other.")
     elif args.cmd == "stats":
         _need_batch(args.batch)
         fields = {k.replace("-", "_"): v for k, v in
                   {"impressions": args.impressions, "reactions": args.reactions,
                    "comments": args.comments, "profile_views": args.profile_views}.items() if v is not None}
-        db.set_outcome(args.batch, **fields)
-        print(f"Saved stats for batch #{args.batch}: {fields}")
+        n = db.set_outcome(args.batch, args.build, **fields)
+        print(f"Saved stats for batch #{args.batch}, build {n}: {fields}")
     elif args.cmd == "baseline":
         base = {"profile_views": args.profile_views, "followers": args.followers,
                 "recruiter_msgs": args.recruiter_msgs, "at": db.now_iso()}

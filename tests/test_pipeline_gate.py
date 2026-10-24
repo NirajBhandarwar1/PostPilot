@@ -75,7 +75,7 @@ def test_failed_idea_regenerated_once(fake_brain):
     b = run()
     assert len(b["ideas"]) == 3
     assert [c[0] for c in calls["one"]] == [2]
-    assert "not in a free model catalog" in calls["one"][0][1][0]
+    assert "not in a model catalog" in calls["one"][0][1][0]
     assert b["ideas"][1]["title"] == "Retry 2"
 
 
@@ -120,7 +120,7 @@ def test_regression_fields_after_gate(fake_brain):
     fake_brain([True, True, True])
     b = run()
     for i in b["ideas"]:
-        for field in ("topic", "heat", "heat_where", "source_urls", "topic_number", "check_before_posting", "proof"):
+        for field in ("topic", "heat", "heat_where", "source_urls", "topic_number", "check_before_posting"):
             assert field in i
     gemini = next(i for i in b["ideas"] if i["topic"] == "Gemini 4 Argon launch")
     assert gemini["source_urls"] == ["https://n/0", "https://n/1"]

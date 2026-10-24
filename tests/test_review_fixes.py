@@ -290,7 +290,11 @@ def test_build_writes_cursor_brief_and_scans_it(monkeypatch, tmp_path):
     assert ".venv\\Scripts\\python.exe -m pytest -q" in doc
     assert doc.index("# PART A") < doc.index("Cursor: stop here") < doc.index("# PART B")
     assert "### Step 1 🤖: Create the project" in doc and "git init" in doc        # fixed first step
-    assert "### Step 2 🤖: Setup  (~15 min)" in doc and "**Done when:** pytest -q passes" in doc
+    # D3/D16: the model's setup commands and packages wait in a 🧑 review step, never in Step 1.
+    step1 = doc[doc.index("### Step 1"):doc.index("### Step 2")]
+    assert "fast-eval-kit" not in step1 and "git clone" not in step1
+    assert "### Step 2 🧑: Review, then run the third-party setup" in doc
+    assert "### Step 3 🤖: Setup  (~15 min)" in doc and "**Done when:** pytest -q passes" in doc
     assert "🧑: Record the demo and add the GIF" in doc and "gh repo create csv-first-aid --public" in doc
     assert "| `openai/gpt-oss-120b` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` |" in doc
     assert "## Check before building" in doc and "fast-eval-kit" in doc and "Older model GPT-4o" in doc

@@ -16,12 +16,13 @@ import json
 import logging
 import math
 import re
-import urllib.parse
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from . import emailhtml, research, brain, db, factgate, llm, mailer, sources
+from . import brain, db, factgate, llm, mailer, sources
+from .render import (CURSOR_PROMPT, slug as _slug, brief_warnings, markdown_email, render_brief,
+                     render_ideas, render_options, render_options_full, text_email)
 from .config import ROOT, settings
 from .vendor import detect as detector
 from .vendor import humanize as humanizer
@@ -45,20 +46,30 @@ def _voice() -> str:
 HISTORY_DAYS = 14
 
 
+def _builds(b) -> list[dict]:
+    """Every build recorded for a batch row. Old batches (before the builds list) count their
+    single chosen idea if the batch was built or posted."""
+    data = json.loads(b["ideas_json"])
+    if data.get("builds"):
+        return data["builds"]
+    if b["status"] in ("built", "posted") and b["chosen"] and b["built_at"]:
+        return [{"idea": b["chosen"], "option": None, "built_at": b["built_at"], "build_dir": b["build_dir"]}]
+    return []
+
+
 def _history() -> list[dict]:
     """Stories you actually built or posted in the last 14 days, with their heat at the time.
-    Skipped and unpicked batches don't count (eng review O4)."""
+    Every build counts, even several from one batch (eng review O4, D5)."""
     out = []
     cutoff = datetime.now(timezone.utc).timestamp() - HISTORY_DAYS * 86400
     for b in db.recent_batches(50):
-        if b["status"] not in ("built", "posted") or not b["chosen"] or not b["built_at"]:
-            continue
-        if datetime.fromisoformat(b["built_at"]).timestamp() < cutoff:
-            continue
         ideas = json.loads(b["ideas_json"]).get("ideas", [])
-        if 1 <= b["chosen"] <= len(ideas):
-            i = ideas[b["chosen"] - 1]
-            out.append({"topic": i.get("topic") or i["title"], "heat": i.get("heat", 0)})
+        for rec in _builds(b):
+            if not rec.get("built_at") or datetime.fromisoformat(rec["built_at"]).timestamp() < cutoff:
+                continue
+            if 1 <= rec["idea"] <= len(ideas):
+                i = ideas[rec["idea"] - 1]
+                out.append({"topic": i.get("topic") or i["title"], "heat": i.get("heat", 0)})
     return out
 
 
@@ -147,10 +158,6 @@ def _heat(topic: dict, signals: list[dict], ids: list[int] | None = None) -> tup
     return score, " | ".join(parts)
 
 
-def _slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:50]
-
-
 def _hf_names(signals: list[dict]) -> list[str]:
     """Model repo ids from the Hugging Face trending signals ("owner/name (tag)")."""
     return [s["title"].split(" (")[0] for s in signals if s["kind"].startswith("Hugging Face")]
@@ -170,7 +177,6 @@ def _finish(idea: dict, n: int, t: dict, signals: list[dict], verdict, cat) -> N
         "check_before_posting": verdict.unverified,
         "handle_type": t.get("handle_type", "news"), "handle": t.get("handle", ""),
         "est_cost": factgate.estimate_cost(idea.get("models_to_run") or [], cat),
-        "proof": f"experiments/{date.today()}-{_slug(idea['title'])}/",
     })
 
 
@@ -276,79 +282,6 @@ def generate_batch(signals: list[dict], history: list[str], voice: str, cat: fac
     }
 
 
-HANDLE_LABEL = {"model": "New model", "github_repo": "Viral GitHub repo", "product": "New product",
-                "paper": "New research", "news": "News"}
-
-
-def _cost_text(i: dict) -> str:
-    c = i.get("est_cost")
-    if not i.get("models_to_run"):
-        return "free (no model calls)"
-    if c is None:
-        return "unknown (a paid model has no listed price)"
-    return "free (only free models)" if c == 0 else f"about ${c:.2f} (20 prompts per model)"
-
-
-def _pretty_where(where: str) -> str:
-    """'News x8 | Hacker News x2 | GitHub trending: +129,417 stars this week' in plain words."""
-    parts = []
-    for p in (where or "").split(" | "):
-        m = re.fullmatch(r"(.+?) x(\d+)", p.strip())
-        if m:
-            name, n = m.group(1), int(m.group(2))
-            parts.append(f"{n} news articles" if name == "News" else f"{name} ({n} posts)")
-        elif p.strip().startswith("News:"):
-            parts.append("in the news")
-        elif p.strip():
-            parts.append(p.strip().replace("Hugging Face trending models: HF trending", "Hugging Face trending"))
-    return " · ".join(parts)
-
-
-def _best_sources(urls: list[str], n: int = 2) -> list[str]:
-    """Readable links first; Google News redirect links only if nothing else."""
-    good = [u for u in urls if "news.google.com" not in u]
-    return (good or urls)[:n]
-
-
-def render_ideas(batch_id: int, batch: dict) -> str:
-    """The first email: each hot story as one clear idea, enough to choose from on a phone."""
-    ideas = batch["ideas"]
-    out = [f"PostPilot #{batch_id}: what's hot in AI, {date.today():%d %b %Y}",
-           f"Reply with a number (1-{len(ideas)}) to get build options for it, or 'skip'.",
-           "Shortcut: reply '2 go' to skip the options and get my top build plan right away.", ""]
-    if batch.get("short"):
-        st = batch["stats"]
-        out += [f"SHORT BATCH: only {len(ideas)} idea passed the fact check "
-                f"({st['dropped']} dropped after a retry).", ""]
-    for n, i in enumerate(ideas, 1):
-        label = HANDLE_LABEL.get(i.get("handle_type", "news"), "News").upper()
-        pick = "   ★ MY PICK" if n == batch.get("recommended") else ""
-        out += ["-" * 60, f"{n}. {i.get('short_title') or i['title']}   [{label}]{pick}"]
-        out += _wrap("The story", i.get("the_news") or i["why_hot"])
-        out += _wrap("Why it's hot", _pretty_where(i.get("heat_where", "")))
-        out += _wrap("What you'd do", i.get("what_you_do") or i["build_plan"])
-        out += _wrap("What the post shows", i.get("post_shows") or i["visual"])
-        out += _wrap("Why it gets you hired", i.get("why_hired") or i["role_angle"])
-        out.append(f"   Effort: {i.get('difficulty', 'medium')} · {_hm(int(i.get('build_minutes') or 60)).lstrip('~')}"
-                   f" · {_cost_text(i).split(' (')[0]}")
-        if i.get("needs"):
-            out += _wrap("You need", ", ".join(i["needs"]))
-        if i.get("check_before_posting"):
-            out += _wrap("Check first", "; ".join(i["check_before_posting"]))
-        out += [f"   Source: {u}" for u in _best_sources(i.get("source_urls", []))]
-        out.append("")
-    if batch.get("also_hot"):
-        out += ["-" * 60, *__import__("textwrap").wrap("Also hot (not picked): " + ", ".join(batch["also_hot"]), 88)]
-    out += ["-" * 60, f"Why I pick #{batch['recommended']}: {batch['recommended_reason']}",
-            "", "Optional: rate the ideas 1-5 to teach me your taste, e.g. '2 rate 4 5 2'."]
-    writers = batch.get("writers") or []
-    primary = (llm.providers("writer") or [None])[0]
-    if writers and primary and not any(w.startswith(primary.name + ":") for w in writers):
-        out.append(f"Note: {primary.name} did not answer (outage or daily cap), so a backup model "
-                   f"({', '.join(writers)}) wrote this batch. Expect weaker ideas.")
-    return "\n".join(out)
-
-
 def save_run(signals: list[dict], history: list[str], cat: factgate.Catalog) -> Path:
     """Snapshot what this run saw, so `postpilot eval` can replay it later (D10)."""
     runs = settings.data_dir / "runs"
@@ -374,7 +307,7 @@ def scout(send_email: bool = True) -> int | None:
         return None
 
     cat = factgate.load_catalogs()
-    log.info("free catalogs: %d models (unavailable: %s, from cache: %s)",
+    log.info("model catalogs: %d models (unavailable: %s, from cache: %s)",
              len(cat.models), cat.unavailable or "none", cat.from_cache or "none")
     history = _history()
     run_path = save_run(signals, history, cat)
@@ -400,7 +333,7 @@ def scout(send_email: bool = True) -> int | None:
 
     if send_email and settings.has_email:
         mailer.send(mailer.subject_for(batch_id, "What's hot in AI: reply with a number"), text,
-                    html=emailhtml.text_email(text))
+                    html=text_email(text))
         db.update_batch(batch_id, status="sent")
     else:
         log.info("email not configured or disabled: ideas saved to %s", ideas_dir)
@@ -409,7 +342,50 @@ def scout(send_email: bool = True) -> int | None:
 
 # ---------- step 2: build ----------
 
-def build(batch_id: int, choice: int, send_email: bool = True, option: int | None = None) -> Path:
+def _email_build(batch_id: int, choice: int, title: str, summary: str, doc: str) -> None:
+    if not settings.has_email:
+        return
+    intro = (f"{summary}\nYour build plan is attached (BUILD.md) and is also below.\n"
+             "1. Do the 'Before you start' list.\n"
+             "2. Make an empty folder, open it in Cursor, and put BUILD.md in it.\n"
+             f"3. In Cursor's Agent chat, paste: {CURSOR_PROMPT}\n"
+             "4. When it works, follow Part B to record the demo and post.\n")
+    body = intro + "\n" + "=" * 60 + "\n\n" + doc
+    # kind="plan": a reply to this email ("step 4 failed") is never read as a pick.
+    mailer.send(mailer.subject_for(batch_id, f"Build plan ready: {title[:60]}", idea=choice, kind="plan"),
+                body, html=markdown_email(intro, doc), attachments=[("BUILD.md", doc)])
+
+
+def _saved_build(data: dict, choice: int, option: int | None, tag: str = "") -> dict | None:
+    """The recorded build of this idea + option of this options list (tag) whose BUILD.md still
+    exists, if any (D18). After '3 new', option 2 of list 'b' is a different build than option 2
+    of the first list."""
+    for rec in reversed(data.get("builds", [])):
+        d = rec.get("build_dir")
+        if rec["idea"] == choice and rec.get("option") == option and \
+                (option is None or rec.get("tag", "") == tag) and d and (Path(d) / "BUILD.md").exists():
+            return rec
+    return None
+
+
+def _build_dir(batch_id: int, choice: int, option: int | None, tag: str, title: str) -> Path:
+    """A folder per build that never overwrites another build's BUILD.md."""
+    base = f"{date.today()}-#{batch_id}.{choice}{tag}" + (f"-o{option}" if option else "") + f"-{_slug(title)}"
+    (settings.output_dir / "builds").mkdir(parents=True, exist_ok=True)
+    out, k = settings.output_dir / "builds" / base, 2
+    while True:
+        try:
+            out.mkdir()                      # atomic: two builds at once never share a folder
+            return out
+        except FileExistsError:
+            out, k = settings.output_dir / "builds" / f"{base}-{k}", k + 1
+
+
+def build(batch_id: int, choice: int, send_email: bool = True, option: int | None = None,
+          reuse: bool = True) -> Path:
+    """Write BUILD.md for idea `choice` (option `option` of its options email). With reuse (the
+    email path), a repeat of an already-built idea+option resends the saved plan instead of
+    paying for a new one (D18); the CLI passes reuse=False to force a fresh plan."""
     row = db.get_batch(batch_id)
     if not row:
         raise ValueError(f"No batch #{batch_id}")
@@ -418,22 +394,61 @@ def build(batch_id: int, choice: int, send_email: bool = True, option: int | Non
     if not 1 <= choice <= len(ideas):
         raise ValueError(f"Batch #{batch_id} has ideas 1-{len(ideas)}")
     idea = ideas[choice - 1]
+    listing = (data.get("options") or {}).get(str(choice), {})
+    tag = listing.get("tag", "") if option else ""
+    kind = idea.get("format", "")
     if option:
-        opts = (data.get("options") or {}).get(str(choice), {}).get("options", [])
+        opts = listing.get("options", [])
         if not 1 <= option <= len(opts):
             raise ValueError(f"Idea {choice} of batch #{batch_id} has no option {option} "
                              f"(run: python -m postpilot options {batch_id} {choice})")
-        idea = _idea_from_option(idea, opts[option - 1],
-                                 (data.get("options") or {}).get(str(choice), {}).get("research"))
+        kind = opts[option - 1].get("kind", "")
+        idea = _idea_from_option(idea, opts[option - 1], listing.get("research"))
+    saved = _saved_build(data, choice, option, tag) if reuse else None
+    if saved:
+        out = Path(saved["build_dir"])
+        log.info("idea %d option %s of #%d was already built; resending %s", choice, option, batch_id, out)
+        if send_email:
+            _email_build(batch_id, choice, saved.get("title") or idea["title"], saved.get("summary", ""),
+                         (out / "BUILD.md").read_text(encoding="utf-8"))
+        return out
     log.info("building #%d idea %d%s: %s", batch_id, choice, f" option {option}" if option else "",
              idea["title"])
 
+    # The number this build will get, for the "After you post" commands in Part B.
+    predicted = len(data.get("builds", [])) + 1
+    plan = _make_plan(idea, batch_id=batch_id, build_no=predicted)
+    kit, doc = plan["kit"], plan["doc"]
+    out = _build_dir(batch_id, choice, option, tag, idea["title"])
+    for w in plan["warnings"]:
+        log.warning("BUILD.md check: %s", w)
+    (out / "BUILD.md").write_text(doc, encoding="utf-8")
+    now = db.now_iso()
+    rec = {"idea": choice, "option": option, "tag": tag, "kind": kind, "title": idea["title"],
+           "built_at": now, "build_dir": str(out), "summary": kit.summary}
+    # D5 + D26: append this build to the latest saved data in one write transaction.
+    saved = db.edit_batch(batch_id, lambda d: d.setdefault("builds", []).append(rec), status="built",
+                          chosen=choice, built_at=now, build_dir=str(out))
+    actual = len(saved["builds"])
+    if actual != predicted:                  # another build landed meanwhile: fix the post commands
+        doc = doc.replace(f" --build {predicted}`", f" --build {actual}`")
+        (out / "BUILD.md").write_text(doc, encoding="utf-8")
+
+    if send_email:
+        _email_build(batch_id, choice, idea["title"], kit.summary, doc)
+    log.info("build plan saved to %s", out / "BUILD.md")
+    return out
+
+
+def _make_plan(idea: dict, batch_id: int | None = None, build_no: int | None = None) -> dict:
+    """Write the BUILD.md plan and post for one idea (or picked option). No saving, no email:
+    build() and the eval both use this, so the eval measures exactly what you would get."""
     llm.reset_usage()                       # so the plan can say which model wrote it
     found = idea.get("research") or {}
     docs, docs_from = found.get("docs", ""), found.get("docs_from", "")
     if not docs:
-        docs, docs_from = research.docs_for(idea)
-    brief = brain.build_brief(idea, research.as_text(found), docs, docs_from)
+        docs, docs_from = sources.docs_for(idea)
+    brief = brain.build_brief(idea, sources.research_digest(found), docs, docs_from)
 
     # The post: humanize and score; one rewrite if it still reads machine-written.
     kit, clean, report, before, after = _write_post(idea, _plan_summary(brief))
@@ -450,55 +465,12 @@ def build(batch_id: int, choice: int, send_email: bool = True, option: int | Non
     post_checks = factgate.scan_text([clean, *kit.alt_hooks], topic, pseudo_signals, cat, runs)
     plan_text = [brief.goal, brief.hot_thing_usage, *[t.details for t in brief.tasks], *brief.stack]
     plan_checks = factgate.scan_text(plan_text, topic, pseudo_signals, cat, runs)
-    # R1: the setup commands Cursor will run are scanned like code (unknown installs, shell tricks).
-    # Hosts the plan may legitimately use: code hosting, package index, the story's own sources.
-    known = {"github.com", "raw.githubusercontent.com", "pypi.org", "files.pythonhosted.org"}
-    known |= {re.sub(r"^www\.", "", urllib.parse.urlparse(u).netloc) for u in idea.get("source_urls", [])}
-    plan_checks += factgate.scan_code([("setup", "\n".join(brief.setup_commands))], extra_hosts=known)
+    # R1: setup commands are scanned like code inside render_brief, next to each command.
     checks = [*idea.get("check_before_posting", []), *post_checks, *kit.fact_checks]
-
-    out = settings.output_dir / "builds" / f"{date.today()}-#{batch_id}-{_slug(idea['title'])}"
-    out.mkdir(parents=True, exist_ok=True)
-    doc = render_brief(idea, brief, kit, clean, (before[1], after[1], after[2]), report, checks, plan_checks)
-    for w in brief_warnings(idea, brief):
-        log.warning("BUILD.md check: %s", w)
-    (out / "BUILD.md").write_text(doc, encoding="utf-8")
-    db.update_batch(batch_id, status="built", chosen=choice, built_at=db.now_iso(), build_dir=str(out))
-
-    if send_email and settings.has_email:
-        intro = (f"{kit.summary}\nYour build plan is attached (BUILD.md) and is also below.\n"
-                 "1. Do the 'Before you start' list.\n"
-                 "2. Make an empty folder, open it in Cursor, and put BUILD.md in it.\n"
-                 f"3. In Cursor's Agent chat, paste: {CURSOR_PROMPT}\n"
-                 "4. When it works, follow Part B to record the demo and post.\n")
-        body = intro + "\n" + "=" * 60 + "\n\n" + doc
-        mailer.send(mailer.subject_for(batch_id, f"Build plan ready: {idea['title'][:60]}", idea=choice),
-                    body, html=emailhtml.markdown_email(intro, doc), attachments=[("BUILD.md", doc)])
-    log.info("build plan saved to %s", out / "BUILD.md")
-    return out
-
-
-CURSOR_PROMPT = ("Read BUILD.md. Build Part A one step at a time. Do the 🤖 steps yourself; when you reach "
-                 "a 🧑 step, stop and tell me exactly what to do, then wait. After each step run its "
-                 "\"Done when\" check and fix any error before moving on. Follow the Rules strictly. "
-                 "Stop at the end of Part A.")
-
-
-# Exact connection details per provider, filled in by code (never by the model).
-PROVIDER_API = {
-    "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY", "platform.openai.com/api-keys (paid)"),
-    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "console.groq.com/keys (free)"),
-    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "openrouter.ai/keys"),
-    "cloudflare": ("https://api.cloudflare.com/client/v4/accounts/<CLOUDFLARE_ACCOUNT_ID>/ai/v1",
-                   "CLOUDFLARE_API_TOKEN", "dash.cloudflare.com > AI > Workers AI (free tier)"),
-}
-
-
-def _as_command(line: str) -> str:
-    """A plain sentence in the setup list ("Visit sqlite.org and download ...") becomes a comment,
-    so nobody pastes it into PowerShell. Cmdlets look like Verb-Noun, so "Word word" is prose."""
-    s = line.strip()
-    return s if s.startswith("#") or not re.match(r"^[A-Z][a-z]+\s", s) else "# " + s
+    doc = render_brief(idea, brief, kit, clean, (before[1], after[1], after[2]), report, checks, plan_checks,
+                       batch_id=batch_id, build_no=build_no)
+    return {"brief": brief, "kit": kit, "doc": doc, "score": after[1],
+            "warnings": brief_warnings(idea, brief)}
 
 
 def _plan_summary(brief) -> str:
@@ -551,153 +523,6 @@ def _write_post(idea: dict, plan: str = ""):
     return best
 
 
-TOTAL_SLACK = 1.5   # warn when the plan's steps add up to more than 1.5x the promised time
-FIXED_MINUTES = {"setup": 10, "record": 15, "publish": 10}
-
-
-def brief_warnings(idea: dict, brief) -> list[str]:
-    """Code-level checks on the plan the model wrote."""
-    out = []
-    total = sum(t.minutes for t in brief.tasks) + sum(FIXED_MINUTES.values())
-    promised = int(idea.get("build_minutes") or 0)
-    if promised and total > TOTAL_SLACK * promised:
-        out.append(f"steps add up to ~{total} min, the option promised ~{promised} min")
-    kind, handle = idea.get("handle_type", ""), (idea.get("handle") or "").split("/")[-1].lower()
-    if kind == "model":
-        if not brief.uses_models:
-            out.append(f"the plan never calls a model, but the story is about {idea.get('handle')}")
-    elif handle and not any(handle in (t.details + t.title + brief.hot_thing_usage).lower() for t in brief.tasks):
-        out.append(f"no step uses {idea.get('handle')}")
-    if brief.uses_models and not idea.get("models_to_run"):
-        out.append("the plan calls models but none were approved")
-    return out
-
-
-def _requirements(brief) -> list[str]:
-    req = {r.strip() for r in brief.requirements if r.strip()} | {"pytest"}
-    if brief.uses_models:
-        req |= {"openai", "python-dotenv"}
-    return sorted(req, key=str.lower)
-
-
-def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks) -> str:
-    """BUILD.md: Part A for Cursor (fixed first/last steps around the model's tasks), Part B for you."""
-    runs = idea.get("models_to_run", []) if brief.uses_models else []
-    env = sorted({PROVIDER_API[k.split(":")[0]][1] for k in runs if k.split(":")[0] in PROVIDER_API})
-    if any(k.startswith("cloudflare:") for k in runs):
-        env.insert(0, "CLOUDFLARE_ACCOUNT_ID")
-    opt = idea.get("option") or {}
-    slug = _slug(brief.project_name)
-    req = _requirements(brief)
-    commands = [c for c in brief.setup_commands if not _as_command(c).startswith("#")]
-    prose = [c for c in brief.setup_commands if _as_command(c).startswith("#")]
-    total = sum(t.minutes for t in brief.tasks) + sum(FIXED_MINUTES.values())
-    warnings = brief_warnings(idea, brief)
-
-    L = [f"# BUILD: {idea['title']}", "",
-         f"Story: {idea.get('topic', '')}  |  Type: {opt.get('kind', idea.get('format', ''))}  |  "
-         f"Difficulty: {opt.get('difficulty', '?')}  |  Realistic time: ~{_hm(total).lstrip('~')}", "",
-         "## How to use this file",
-         "1. Do the **Before you start** list below (5-15 minutes).",
-         "2. Make an empty folder, open it in Cursor, and put this file in it as `BUILD.md`.",
-         "3. In Cursor's Agent chat, paste:",
-         f"   > {CURSOR_PROMPT}",
-         "4. Never paste keys into the chat; put them in `.env` when asked.",
-         "5. When everything works, do Part B yourself.", ""]
-    writers = sorted(llm.USAGE)
-    primary = (llm.providers("writer") or [None])[0]
-    if writers and primary and not any(w.startswith(primary.name + ":") for w in writers):
-        warnings = [*warnings, f"written by a backup model ({', '.join(writers)}) because {primary.name} "
-                    "was unavailable or over today's cap: expect a weaker plan; consider rebuilding tomorrow"]
-    if warnings:
-        L += ["> **Note from PostPilot:** " + "; ".join(warnings) + ".", ""]
-    L += ["---", "", "# PART A: Build instructions (for Cursor)", "",
-          "## Goal", brief.goal, "", f"Repo name: `{slug}`", "",
-          "## Before you start (🧑 you, once)",
-          *[f"- [ ] {x}" for x in [*brief.before_you_start, *prose]],
-          *([f"- [ ] Get keys for `.env`: " + "; ".join(f"{v[1]} from {v[2]}" for v in PROVIDER_API.values()
-                                                         if v[1] in env)] if env else []),
-          "- [ ] Python: `py -3.12 --version` prints 3.12.x. Git: `git --version` works.", ""]
-    if brief.hot_thing_usage:
-        L += [f"## How {idea.get('handle') or 'the hot thing'} is used in this build", brief.hot_thing_usage, ""]
-    L += ["## Done means", *[f"- [ ] {c}" for c in brief.done_criteria], "",
-          "## Stack", *[f"- {x}" for x in brief.stack], "",
-          "## Files", *[f"- `{f.path}`: {f.purpose}" for f in brief.file_tree], ""]
-    if brief.visual_spec:
-        L += ["## Look and feel (the demo video sells this)", brief.visual_spec, ""]
-    if runs:
-        L += ["## AI models the code may call (only these)",
-              "All are OpenAI-compatible: use the `openai` package with `base_url` and the key below.", "",
-              "| model id | base_url | key in .env |", "| --- | --- | --- |"]
-        for k in runs:
-            prov, mid = k.split(":", 1)
-            base, key, _ = PROVIDER_API.get(prov, ("?", "?", "?"))
-            L.append(f"| `{mid}` | `{base}` | `{key}` |")
-        L.append("")
-    L += ["## Sample data", brief.demo_data, "", "## Steps", ""]
-
-    # Step 1 is always the same, so it is always right.
-    env_lines = [f"{e}=" for e in env] + (["MAX_CALLS=60"] if runs else ["# no keys needed"])
-    L += ["### Step 1 🤖: Create the project  (~10 min)",
-          "Run these in the project folder (PowerShell):", "```powershell", "git init",
-          "py -3.12 -m venv .venv",
-          f"Set-Content requirements.txt \"{chr(96)}n\".Join(@({', '.join(repr(r) for r in req)}))".replace("'", '"'),
-          ".\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt", *commands, "```",
-          "Create `.gitignore` with: `.env`, `.venv/`, `__pycache__/`, `.pytest_cache/`, `*.db`, `node_modules/`.",
-          "Create `.env.example` with:", "```", *env_lines, "```",
-          "", "**Done when:** `git check-ignore .env` prints `.env`, and "
-          "`.\\.venv\\Scripts\\python.exe -m pytest --version` prints a version.", "",
-          f"All later steps run Python as `{brain.VENV_PY}` and tests as `{brain.TEST_CMD}`.", ""]
-    for n, t in enumerate(brief.tasks, 2):
-        title = re.sub(r"^(?:step\s*\d+\s*[:.)-]\s*)?(?:\d+\s*[.):-]\s*)?", "", t.title, flags=re.I)
-        mark = "🧑" if (t.who or "").lower().startswith("you") else "🤖"
-        L += [f"### Step {n} {mark}: {title}  (~{t.minutes} min)", t.details, "", f"**Done when:** {t.done_when}", ""]
-    n = len(brief.tasks) + 2
-    L += [f"### Step {n} 🧑: Record the demo and add the GIF  (~15 min)",
-          "Follow the shot list in Part B. Record with Win+Alt+R (Xbox Game Bar) or ScreenToGif (free). "
-          "Save a 10-15 second GIF as `docs/demo.gif`; Cursor then adds it at the top of README.md.", "",
-          "**Done when:** `docs/demo.gif` exists and shows in the README preview.", "",
-          f"### Step {n + 1} 🧑: Publish the repo on GitHub  (~10 min)",
-          "Check nothing secret is included, then publish (you run these, not Cursor):", "```powershell",
-          "git ls-files .env            # must print nothing", "git add .",
-          f"git commit -m \"{slug}: first version\"",
-          f"gh repo create {slug} --public --source . --push   # or create it on github.com and push", "```",
-          "Add a short repo description and 3-5 topics on GitHub (e.g. the hot thing's name).", "",
-          "**Done when:** the repo page shows the README with the GIF.", ""]
-    L += [f"## Tests (run with `{brain.TEST_CMD}`; no network, no keys)", *[f"- {x}" for x in brief.tests], "",
-          "## Rules (must follow)",
-          "- Never print, log or commit secrets. `.env` stays in `.gitignore`.",
-          *(["- Read keys only from `.env` (python-dotenv). Call only the models listed above; stop after "
-             "`MAX_CALLS` calls and cache responses to disk."] if runs else
-            ["- The app itself calls no AI model and needs no keys."]),
-          "- Only open-source (permissive license) or self-written targets and data. No scraping against "
-          "a site's terms, no copies of paid software, no personal data.",
-          "- No deleting files outside this folder; do not run downloaded binaries the person has not approved.",
-          "- Keep it small and working: a smaller demo that runs beats a big one that doesn't.",
-          "", "## README (public repo)", *[f"- {x}" for x in brief.readme_outline], "",
-          "## Known pitfalls", *[f"- {x}" for x in brief.pitfalls]]
-    if plan_checks:
-        L += ["", "## Check before building", *[f"- {c}" for c in plan_checks]]
-    flags = report.get("structures", [])
-    L += ["", "**Cursor: stop here. Part B is for the human.**", "", "---", "",
-          "# PART B: Demo and LinkedIn post (for you)", "",
-          "## 1. Record the demo (30-60 seconds)", *[f"{k}. {x}" for k, x in enumerate(brief.demo_script, 1)], "",
-          "## 2. The post (replace every {{...}} with your real results)", "", "```", post.strip(), "```", "",
-          f"Human score: {score[1]:.0f}/100 ({score[2]})",
-          *(["Lines to rewrite by hand:", *[f"- {s['name']} (x{s['count']}): {s['fix']}" for s in flags]]
-            if flags else []), "",
-          "## 3. Fill these in", *[f"- {x}" for x in kit.placeholders], "",
-          "## 4. Other opening lines", *[f"- {x}" for x in kit.alt_hooks], "",
-          "## 5. Image / video", kit.visual_spec, "",
-          "## 6. First comment (post it right after publishing)", kit.first_comment or "{{your repo link}}", "",
-          "## 7. Check before you post", *([f"- {c}" for c in checks] or ["- nothing flagged"]), "",
-          "## 8. After you post",
-          "- Record it: `python -m postpilot posted <batch> <linkedin url>`",
-          "- Log who reaches out: `python -m postpilot inbound <batch> --recruiters N --founders N`", "",
-          "## Story sources", *[f"- {u}" for u in idea.get("source_urls", [])[:5]]]
-    return "\n".join(L)
-
-
 # ---------- step 2b: build options for the picked idea ----------
 
 def _idea_from_option(idea: dict, o: dict, research: dict | None = None) -> dict:
@@ -708,7 +533,6 @@ def _idea_from_option(idea: dict, o: dict, research: dict | None = None) -> dict
                 f"({n}) {s}" for n, s in enumerate(o.get("steps_preview", []), 1)),
             "build_minutes": o["minutes"], "hook_options": [o["hook"]], "visual": o["post_shows"],
             "needs": o.get("needs", []), "models_to_run": o.get("models_to_run", []),
-            "proof": f"experiments/{date.today()}-{_slug(o['title'])}/",
             "option": o, "research": research}
 
 
@@ -725,8 +549,38 @@ def _check_option(o: dict, idea: dict, cat: factgate.Catalog) -> factgate.Verdic
     return factgate.check_idea(as_idea, topic, sigs, cat)
 
 
-def propose(batch_id: int, choice: int, send_email: bool = True) -> dict:
-    """The person picked idea `choice`: offer 3-5 concrete builds on it, fact-checked and priced."""
+def _next_tag(existing: dict | None) -> str:
+    """'' for the first options list of an idea, then 'b', 'c', ... for fresh lists (#N.3b)."""
+    if not existing:
+        return ""
+    tag = existing.get("tag", "")
+    if tag == "z":       # the email tag allows a-z; past that a reply could never be matched
+        raise ValueError("this idea already has 25 fresh options lists; pick one of them or another idea")
+    return "b" if not tag else chr(ord(tag) + 1)
+
+
+def _send_options(batch_id: int, choice: int, idea: dict, result: dict, send_email: bool) -> None:
+    tag = result.get("tag", "")
+    text = render_options(batch_id, choice, idea, result)
+    ideas_dir = settings.output_dir / "ideas"
+    ideas_dir.mkdir(parents=True, exist_ok=True)
+    (ideas_dir / f"{date.today()}-#{batch_id}.{choice}{tag}-options.md").write_text(text, encoding="utf-8")
+    (ideas_dir / f"{date.today()}-#{batch_id}.{choice}{tag}-options-full.md").write_text(
+        render_options_full(batch_id, choice, idea, result), encoding="utf-8")
+    if send_email and settings.has_email:
+        mailer.send(mailer.subject_for(batch_id, f"Build options: {idea['title'][:60]}", idea=choice,
+                                       version=tag), text, html=text_email(text))
+    else:
+        log.info("options saved to %s", ideas_dir)
+
+
+def propose(batch_id: int, choice: int, send_email: bool = True, fresh: bool = False,
+            reply_id: str | None = None) -> dict:
+    """The person picked idea `choice`: offer 3-5 concrete builds on it, fact-checked and priced.
+    If options already exist they are resent unchanged (D4), so every options email keeps
+    pointing at the list it showed; fresh=True ("3 new", --fresh) makes a new tagged list (D23).
+    reply_id: the email that asked. If that same email already made the current list (a redo
+    after a crash), the list is resent instead of paying for another one."""
     row = db.get_batch(batch_id)
     if not row:
         raise ValueError(f"No batch #{batch_id}")
@@ -734,18 +588,49 @@ def propose(batch_id: int, choice: int, send_email: bool = True) -> dict:
     if not 1 <= choice <= len(data["ideas"]):
         raise ValueError(f"Batch #{batch_id} has ideas 1-{len(data['ideas'])}")
     idea = data["ideas"][choice - 1]
+    existing = (data.get("options") or {}).get(str(choice))
+    redo = bool(existing and reply_id and existing.get("from_reply") == reply_id)
+    if existing and (not fresh or redo):
+        log.info("options for #%d idea %d already exist; resending them", batch_id, choice)
+        _send_options(batch_id, choice, idea, existing, send_email)
+        return existing
+    if fresh:
+        _next_tag(existing)                  # refuse past 'z' before paying for a list
     log.info("options for #%d idea %d: %s", batch_id, choice, idea["title"])
+    result, _ = _make_options(idea)
+    if reply_id:
+        result["from_reply"] = reply_id
+
+    def save(d: dict) -> None:
+        # D26: merge just this idea's options into the latest saved data. The tag is decided here,
+        # under the write lock, so two fresh lists made at once never share a tag.
+        cur = d.setdefault("options", {}).get(str(choice))
+        same_reply = bool(cur and reply_id and cur.get("from_reply") == reply_id)
+        result["tag"] = _next_tag(cur) if fresh and not same_reply else (cur or {}).get("tag", "")
+        if cur and (not fresh or same_reply):     # another request saved a list first: keep that one
+            result.clear()
+            result.update(cur)
+            return
+        d["options"][str(choice)] = result
+    db.edit_batch(batch_id, save, status="options_sent")
+    _send_options(batch_id, choice, idea, result, send_email)
+    return result
+
+
+def _make_options(idea: dict) -> tuple[dict, list[str]]:
+    """Research the hot thing and write 3-5 fact-checked, priced build options for it.
+    No saving, no email: propose() and the eval both use this. Returns (result, dropped)."""
     llm.reset_usage()
     cat = factgate.load_catalogs()
     keys = [m.key for m in factgate.shortlist(cat, idea.get("entities", []) + [idea.get("handle", "")])]
     notes = _model_notes(cat, keys)
 
-    found = research.research(idea)
-    digest = research.as_text(found)
+    found = sources.research(idea)
+    digest = sources.research_digest(found)
     if found.get("docs"):
         digest += (f"\n\nOfficial docs ({found['docs_from']}): what it is for and how it is used:\n"
                    + found["docs"][:2500])
-    known = [t.lower() for t in research.titles(found)]
+    known = [t.lower() for t in sources.research_titles(found)]
 
     kept, raw, dropped = [], {}, []
     extra = ""
@@ -784,21 +669,7 @@ def propose(batch_id: int, choice: int, send_email: bool = True) -> dict:
               "story_intro": raw.get("story_intro", ""),
               "recommended_reason": reason if rec else "Best remaining option after the fact check.",
               "writers": sorted(llm.USAGE)}
-    data.setdefault("options", {})[str(choice)] = result
-    db.update_batch(batch_id, ideas_json=json.dumps(data), status="options_sent")
-
-    text = render_options(batch_id, choice, idea, result)
-    ideas_dir = settings.output_dir / "ideas"
-    ideas_dir.mkdir(parents=True, exist_ok=True)
-    (ideas_dir / f"{date.today()}-#{batch_id}.{choice}-options.md").write_text(text, encoding="utf-8")
-    (ideas_dir / f"{date.today()}-#{batch_id}.{choice}-options-full.md").write_text(
-        render_options_full(batch_id, choice, idea, result), encoding="utf-8")
-    if send_email and settings.has_email:
-        mailer.send(mailer.subject_for(batch_id, f"Build options: {idea['title'][:60]}", idea=choice), text,
-                    html=emailhtml.text_email(text))
-    else:
-        log.info("options saved to %s", ideas_dir)
-    return result
+    return result, dropped
 
 
 def _overlap(a: str, b: str) -> bool:
@@ -808,128 +679,6 @@ def _overlap(a: str, b: str) -> bool:
 
 
 REQUIRED_KINDS = ("demo-app", "open-source-tool")   # every options email has both
-KIND_LABEL = {"demo-app": "LOOK WHAT I BUILT", "open-source-tool": "PUBLIC GITHUB REPO"}
-
-DIFFICULTY_BAR = {"easy": "EASY   [#  ]", "medium": "MEDIUM [## ]", "hard": "HARD   [###]"}
-
-
-def _hm(minutes: int) -> str:
-    return f"~{minutes} min" if minutes < 90 else f"~{minutes / 60:.1f} h".replace(".0 h", " h")
-
-
-def _mostly_latin(s: str) -> bool:
-    return sum(ord(c) < 0x250 for c in s) >= 0.8 * max(1, len(s))
-
-
-def _clip(s: str, words: int) -> str:
-    w = (s or "").split()
-    return " ".join(w[:words]) + ("…" if len(w) > words else "")
-
-
-def _viral_line(r: dict) -> str:
-    """The 3 strongest proofs of what people want, in one line (English titles only)."""
-    items = [f'"{_clip(v["title"], 8)}" video ({_short_num(v["views"])} views)'
-             for v in r.get("videos", []) if _mostly_latin(v["title"])][:2]
-    items += [f'{g["title"].split(":")[0]} repo ({_short_num(g["stars"])} stars)' for g in r.get("repos", [])][:1]
-    items += [f'HN thread ({h["points"]} points)' for h in r.get("hn", [])][:1]
-    return " · ".join(items[:3])
-
-
-def _short_num(n: int) -> str:
-    return f"{n / 1e6:.1f}M" if n >= 1e6 else f"{n / 1e3:.0f}k" if n >= 1e3 else str(n)
-
-
-def _wrap(label: str, text: str, width: int = 88) -> list[str]:
-    """'   Label: text' wrapped, continuation lines indented under the text."""
-    import textwrap
-    first = f"   {label}: "
-    lines = textwrap.wrap(text or "", width=width - len(first), break_on_hyphens=False) or [""]
-    return [first + lines[0]] + ["     " + ln for ln in textwrap.wrap(" ".join(lines[1:]), width=width - 5,
-                                                                      break_on_hyphens=False)]
-
-
-def _inspired(o: dict) -> str:
-    src = o.get("inspired_by") or ""
-    return src + (f". Your twist: {o['twist']}" if o.get("twist") else "")
-
-
-def render_options(batch_id: int, choice: int, idea: dict, res: dict) -> str:
-    """The email: the story in 2 lines, then each option in plain words (~7 lines), enough to
-    choose without knowing the tool. Full details come with the build kit."""
-    opts = res["options"]
-    out = [f"PostPilot #{batch_id}.{choice}: what to build on {idea.get('handle') or idea['topic']}",
-           f"Reply with a number (1-{len(opts)}) and I'll send the code, the steps and the post draft. "
-           "Or 'skip'.", ""]
-    intro = res.get("story_intro") or idea.get("the_news") or ""
-    if intro:
-        out += ["THE STORY", *[ln for ln in __import__("textwrap").wrap(intro, 88)], ""]
-    viral = _viral_line(res.get("research") or {})
-    if viral:
-        out += [*__import__("textwrap").wrap("Already viral: " + viral, 88), ""]
-    for n, o in enumerate(opts, 1):
-        diff = (o.get("difficulty") or "").lower()
-        label = KIND_LABEL.get(o["kind"], o["kind"].upper().replace("-", " "))
-        pick = "   ★ MY PICK" if n == res["recommended"] else ""
-        out += ["-" * 60, f"{n}. {o.get('short_title') or o['title']}   [{label}]{pick}"]
-        out += _wrap("What it is", o.get("what_it_is") or o["what_you_build"])
-        out += _wrap("What you show", o.get("what_you_show") or o["post_shows"])
-        out += _wrap("Why it gets you hired", o.get("why_hired") or o["why_hiring_cares"])
-        if o.get("inspired_by"):
-            out += _wrap("Inspired by", _inspired(o))
-        out += [f"   Effort: {diff} · {_hm(o['minutes']).lstrip('~')} · {_cost_text(o).split(' (')[0]}", ""]
-    out += ["-" * 60, f"Why I pick #{res['recommended']}: {res['recommended_reason']}"]
-    return "\n".join(out)
-
-
-def render_options_full(batch_id: int, choice: int, idea: dict, res: dict) -> str:
-    """The long version (saved to a file, and its details go into the build kit)."""
-    opts = res["options"]
-    out = [f"PostPilot #{batch_id}.{choice}: what to build on \"{idea['title']}\"", "",
-           f"Reply with a number (1-{len(opts)}) and I'll write the code, the steps and the post. "
-           "Or 'skip'.", "", "QUICK VIEW"]
-    for n, o in enumerate(opts, 1):
-        diff = (o.get("difficulty") or "").lower()
-        out.append(f"  {n}. {o['title']}  |  {diff or '?'}  |  {_hm(o['minutes'])}  |  "
-                   f"{_cost_text(o).split(' (')[0]}")
-    out += [f"  My pick: #{res['recommended']}. {res['recommended_reason']}", ""]
-    r = res.get("research") or {}
-    if any(r.get(k) for k in ("videos", "repos", "hn")):
-        out += ["=" * 60, "WHAT'S ALREADY VIRAL (what the options learn from)"]
-        out += [f"  YouTube  {v['views']:>10,} views  {v['title'][:80]}" for v in r.get("videos", [])[:4]]
-        out += [f"  GitHub   {g['stars']:>10,} stars  {g['title'][:80]}" for g in r.get("repos", [])[:4]]
-        out += [f"  HN       {h['points']:>10,} pts    {h['title'][:80]}" for h in r.get("hn", [])[:2]]
-        out.append("")
-    for n, o in enumerate(opts, 1):
-        diff = (o.get("difficulty") or "").lower()
-        out += [
-            "=" * 60,
-            f"{n}. {o['title']}",
-            f"   {DIFFICULTY_BAR.get(diff, diff.upper())}  {o['difficulty_why']}",
-            f"   TIME: {_hm(o['minutes'])}   |   COST: {_cost_text(o)}   |   TYPE: {KIND_LABEL.get(o['kind'], o['kind'])}",
-            "",
-            f"   INSPIRED BY: {o.get('inspired_by', '')}",
-            f"   YOUR EDGE: {o.get('your_edge', '')}",
-            f"   WHAT YOU BUILD: {o['what_you_build']}",
-            f"   WHAT THE POST SHOWS: {o['post_shows']}",
-            f"   WHY HIRING PEOPLE CARE: {o['why_hiring_cares']}",
-            f"   WHO IT IMPRESSES: {o['who_it_impresses']}",
-            f"   WHY IT STANDS OUT: {o['stand_out']}",
-            "   STEPS:",
-            *[f"     {k}. {s}" for k, s in enumerate(o.get("steps_preview", []), 1)],
-            *( [f"   MODELS: {', '.join(m.split(':', 1)[1] for m in o['models_to_run'])}"]
-               if o.get("models_to_run") else []),
-            f"   YOU NEED: {', '.join(o.get('needs', [])) or 'nothing extra'}",
-            f"   RISK: {o['risk']}",
-            f"   OPENING LINE: {o['hook']}",
-            *( ["   Check before you post:", *[f"     ! {c}" for c in o["check_before_posting"]]]
-               if o.get("check_before_posting") else []),
-            "",
-        ]
-    out += ["=" * 60, f"Story: {idea['topic']}",
-            *[f"  {u}" for u in idea.get("source_urls", [])[:3]]]
-    return "\n".join(out)
-
-
 # ---------- the always-on loop ----------
 
 RETRY_AFTER_FAILURE_S = 3600
@@ -949,37 +698,89 @@ def scout_due() -> bool:
 def check_replies() -> None:
     if not settings.has_email:
         return
-    for batch_id, idea_n, choice in mailer.fetch_replies():
-        handle_reply(batch_id, idea_n, choice)
+    for batch_id, idea_ref, choice, uid in mailer.fetch_replies():
+        # handle_reply catches its own errors and emails you about them; only if it returns
+        # (success or emailed failure) is the reply recorded as handled and marked read. A crash
+        # or kill leaves it unread, so the next check redoes it, and a finished build is resent,
+        # not rebuilt (D8, D18). Each reply is handled at most once, even if marking it read
+        # fails, and one bad reply never blocks the ones after it.
+        key = "reply:" + (uid.decode() if isinstance(uid, bytes) else str(uid))
+        try:
+            state = db.claim(key)            # atomic: `run` and a manual `check` never both pay
+            if state == "busy":
+                continue
+            if state == "claimed":
+                try:
+                    handle_reply(batch_id, idea_ref, choice, reply_id=key)
+                except BaseException:
+                    db.release(key, done=False)          # not finished: the next check redoes it
+                    raise
+                db.release(key, done=True)
+            mailer.mark_read([uid])
+        except Exception:
+            log.exception("reply %s to #%d could not be finished; will retry next check", key, batch_id)
 
 
-def handle_reply(batch_id: int, idea_n: int | None, choice: str) -> None:
-    """Reply to the ideas email ("3") -> build options; "3 go" -> build my top option now;
-    reply to an options email ("#8.3", "2") -> build that option."""
+def _split_ref(idea_ref) -> tuple[int | None, str]:
+    """3 -> (3, ''); '3b' -> (3, 'b'); None -> (None, '')."""
+    if idea_ref is None:
+        return None, ""
+    m = re.fullmatch(r"(\d+)([a-z]?)", str(idea_ref))
+    return (int(m.group(1)), m.group(2)) if m else (None, "")
+
+
+def handle_reply(batch_id: int, idea_ref: int | str | None, choice: str, reply_id: str | None = None) -> None:
+    """Reply to the ideas email: "3" -> options (saved ones are resent), "3 new" -> fresh options,
+    "3 go" -> build the top option now, "skip". Reply to an options email ("#8.3" or "#8.3b"):
+    "2" or "2 go" -> build that option, "2 new" -> a fresh options list for that idea; if that
+    list was replaced by a newer one, say so instead. A pick on a skipped batch un-skips it."""
     row = db.get_batch(batch_id)
-    if not row or row["status"] == "skipped":
+    if not row:
         return
+    idea_n, version = _split_ref(idea_ref)
     if choice == "skip":
-        if idea_n is None:
-            db.update_batch(batch_id, status="skipped")
-            log.info("batch #%d skipped by reply", batch_id)
+        if idea_n is None and row["status"] != "skipped":
+            db.update_batch(batch_id, status="skipped")       # ignored if something was built
+            log.info("batch #%d skip reply handled", batch_id)
         return
-    num, go = int(choice.split()[0]), choice.endswith(" go")
-    if idea_n is None and row["status"] == "built" and not go:
-        return                                        # already built; ignore a stray re-reply
+    word = choice.split()[1] if len(choice.split()) > 1 else ""
+    num = int(choice.split()[0])
     try:
         if idea_n is not None:
-            build(batch_id, idea_n, option=num)
-        elif go:
+            saved = (json.loads(row["ideas_json"]).get("options") or {}).get(str(idea_n))
+            redo = bool(reply_id and saved and saved.get("from_reply") == reply_id)   # this reply made it
+            if saved and saved.get("tag", "") != version and not redo:
+                newest = f"#{batch_id}.{idea_n}{saved.get('tag', '')}"
+                log.info("reply to replaced options list #%d.%d%s; newest is %s", batch_id, idea_n, version, newest)
+                _notify(mailer.subject_for(batch_id, "That options list was replaced", idea=idea_n,
+                                           version=version, kind="note"),
+                        f"You asked for fresh options after this email, so its list was replaced.\n"
+                        f"Reply to the newest options email ([PostPilot {newest}]) to pick a build.")
+                return
+            if word == "new":
+                propose(batch_id, idea_n, fresh=True, reply_id=reply_id)
+            else:
+                build(batch_id, idea_n, option=num)
+        elif word == "go":
             res = propose(batch_id, num, send_email=False)
             build(batch_id, num, option=res["recommended"])
         else:
-            propose(batch_id, num)
+            propose(batch_id, num, fresh=(word == "new"), reply_id=reply_id)
     except Exception as e:
         log.exception("reply handling failed for #%d", batch_id)
-        if settings.has_email:
-            mailer.send(mailer.subject_for(batch_id, "Something failed", idea=idea_n),
-                        f"Error: {e}\nReply again to retry.")
+        _notify(mailer.subject_for(batch_id, "Something failed", idea=idea_n, version=version),
+                f"Error: {e}\nReply to this email with the same answer to try again.")
+
+
+def _notify(subject: str, body: str) -> None:
+    """A short status email. A failure to send it is logged, never raised: the reply it is about
+    has been handled either way."""
+    if not settings.has_email:
+        return
+    try:
+        mailer.send(subject, body)
+    except Exception:
+        log.exception("could not send: %s", subject)
 
 
 def run_forever() -> None:
@@ -1042,31 +843,135 @@ def replay(n: int = 3) -> dict:
     return total
 
 
+# ---------- build eval: options -> BUILD.md -> post, scored against fixed bars (D14, D24, D25) ----------
+
+EVAL_BUDGET = 60_000        # GPT-6 tokens one eval run may spend (D24)
+LIVE_RESERVE = 100_000      # never let an eval leave the live loop with less than this today
+EVAL_MIN = 20_000           # below this an eval can't finish one story: don't start
+EVAL_BARS = {
+    "options dropped <= 1": lambda r: r["dropped"] <= 1,
+    "demo + GitHub repo offered": lambda r: r["has_required"],
+    "BUILD.md warnings = 0": lambda r: r["warnings"] == 0,
+    f"post human score >= {POST_TARGET}": lambda r: r["post_score"] >= POST_TARGET,
+}
+
+
+def _eval_stories(n: int) -> list[tuple[int, int, dict]]:
+    """The last n saved stories: ideas that got options first (what you actually picked), then
+    the first idea of recent batches."""
+    picked, fallback = [], []
+    for b in db.recent_batches(30):
+        data = json.loads(b["ideas_json"])
+        ideas = data.get("ideas", [])
+        for k in (data.get("options") or {}):
+            if k.isdigit() and 1 <= int(k) <= len(ideas):
+                picked.append((b["id"], int(k), ideas[int(k) - 1]))
+        if ideas:
+            fallback.append((b["id"], 1, ideas[0]))
+    seen, out = set(), []
+    for item in picked + fallback:
+        if (item[0], item[1]) not in seen:
+            seen.add((item[0], item[1]))
+            out.append(item)
+    return out[:n]
+
+
+def eval_builds(n: int = 2) -> dict:
+    """Re-run saved stories through the CURRENT options, BUILD.md and post prompts with GPT-6 and
+    score each against EVAL_BARS. Never saves or emails anything. Run it by hand after changing a
+    prompt; compares with the previous run."""
+    stories = _eval_stories(n)
+    if not stories:
+        print("No saved stories yet. Run `python -m postpilot scout --no-email` first.")
+        return {}
+    used, cap = llm.paid_tokens_today(), llm.daily_cap()
+    reserve = min(LIVE_RESERVE, cap // 2)          # a small cap still leaves half for live emails
+    allowed = min(EVAL_BUDGET, cap - reserve - used)
+    if allowed < EVAL_MIN:
+        print(f"Not running: today's GPT-6 use is {used:,} of {cap:,}, and {reserve:,} stays reserved for "
+              f"your live emails, so an eval would get under {EVAL_MIN:,} tokens. Try again tomorrow.")
+        return {"refused": True}
+    rows = []
+    with llm.token_budget(allowed) as budget:
+        for bid, n_idea, idea in stories:
+            try:
+                res, dropped = _make_options(idea)
+                opt = res["options"][res["recommended"] - 1]
+                plan = _make_plan(_idea_from_option(idea, opt, res.get("research")))
+            except llm.BudgetExceeded:
+                print(f"Token budget reached ({allowed:,}); stopping early.")
+                break
+            except Exception as e:
+                print(f"#{bid}.{n_idea} ERROR {e}")
+                continue
+            r = {"story": f"#{bid}.{n_idea}", "title": idea.get("title", "")[:45], "dropped": len(dropped),
+                 "has_required": all(any(o["kind"] == k for o in res["options"]) for k in REQUIRED_KINDS),
+                 "warnings": len(plan["warnings"]), "post_score": round(plan["score"])}
+            r["bars"] = {name: bool(test(r)) for name, test in EVAL_BARS.items()}
+            rows.append(r)
+            print(f"{r['story']:8} {r['title']:45}  dropped {r['dropped']}  warnings {r['warnings']}  "
+                  f"post {r['post_score']}  " + " ".join("PASS" if ok else "FAIL" for ok in r["bars"].values()))
+        spent = budget["used"]
+    if not rows:
+        return {"stories": 0, "tokens": spent}
+    previous = json.loads(db.get_meta("eval:builds:last", "{}") or "{}")
+    summary = {name: sum(r["bars"][name] for r in rows) / len(rows) for name in EVAL_BARS}
+    print(f"\nBars ({len(rows)} stories, {spent:,} GPT-6 tokens):")
+    for name, rate in summary.items():
+        before = previous.get(name)
+        trend = "" if before is None else ("  (same as last run)" if before == rate else
+                                           f"  ({'better' if rate > before else 'WORSE'} than last run: {before:.0%})")
+        print(f"  {'PASS' if rate == 1 else 'FAIL'}  {name:28} {rate:.0%} of stories{trend}")
+    db.set_meta("eval:builds:last", json.dumps(summary))
+    return {"stories": len(rows), "tokens": spent, "bars": summary, "rows": rows}
+
+
 # ---------- outcomes: what your posts actually did (eng review O2) ----------
 
+def _built_item(batch, build_no: int) -> tuple[dict, str]:
+    """(idea, what was built) for one outcome row: the built option's type when the build came
+    from an options email, else the idea's own format. build_no 0 = an old batch's chosen idea."""
+    data = json.loads(batch["ideas_json"]) if batch else {}
+    ideas, builds = data.get("ideas", []), data.get("builds", [])
+    if build_no and 1 <= build_no <= len(builds):
+        rec = builds[build_no - 1]
+        idea = ideas[rec["idea"] - 1] if 1 <= rec["idea"] <= len(ideas) else {}
+        if rec.get("kind"):                  # saved at build time, so a later fresh list can't change it
+            return idea, rec["kind"]
+        listing = (data.get("options") or {}).get(str(rec["idea"]), {})
+        opts = listing.get("options", []) if listing.get("tag", "") == rec.get("tag", "") else []
+        if rec.get("option") and 1 <= rec["option"] <= len(opts):
+            return idea, opts[rec["option"] - 1].get("kind", "?")
+        return idea, idea.get("format", "?")
+    chosen = batch["chosen"] if batch else None
+    idea = ideas[chosen - 1] if chosen and 1 <= chosen <= len(ideas) else {}
+    return idea, idea.get("format", "?")
+
+
 def report() -> dict:
-    """Rank formats and topic kinds by inbound (recruiters + founders + other) per post."""
+    """Rank what you built (option type) and topic kinds by inbound (recruiters + founders +
+    other) per post. Each post is credited to the exact build you posted (D20)."""
     rows = db.all_outcomes()
     posted = [r for r in rows if r["posted_url"]]
     if not posted:
         print("No posts logged yet. After posting: python -m postpilot posted <batch> <linkedin-url>")
         return {}
-    by = {"format": {}, "topic kind": {}}
+    by = {"built": {}, "topic kind": {}}
     total_in = 0
-    print(f"{'batch':>5}  {'inbound':>7}  {'recr':>4} {'fndr':>4} {'othr':>4}  format / topic")
+    print(f"{'post':>8}  {'inbound':>7}  {'recr':>4} {'fndr':>4} {'othr':>4}  built / topic")
     for r in posted:
         batch = db.get_batch(r["batch_id"])
-        ideas = json.loads(batch["ideas_json"]).get("ideas", []) if batch else []
-        idea = ideas[batch["chosen"] - 1] if batch and batch["chosen"] and batch["chosen"] <= len(ideas) else {}
+        idea, built = _built_item(batch, r["build_no"])
         inbound = (r["recruiters"] or 0) + (r["founders"] or 0) + (r["other"] or 0)
         total_in += inbound
-        fmt, kind = idea.get("format", "?"), idea.get("topic_kind", "?") or "?"
-        for dim, key in (("format", fmt), ("topic kind", kind)):
+        kind = idea.get("topic_kind", "?") or "?"
+        for dim, key in (("built", built), ("topic kind", kind)):
             agg = by[dim].setdefault(key, {"posts": 0, "inbound": 0})
             agg["posts"] += 1
             agg["inbound"] += inbound
-        print(f"#{r['batch_id']:>4}  {inbound:>7}  {r['recruiters'] or 0:>4} {r['founders'] or 0:>4} "
-              f"{r['other'] or 0:>4}  {fmt} / {idea.get('topic', '?')[:50]}")
+        label = f"#{r['batch_id']}" + (f".b{r['build_no']}" if r["build_no"] else "")
+        print(f"{label:>8}  {inbound:>7}  {r['recruiters'] or 0:>4} {r['founders'] or 0:>4} "
+              f"{r['other'] or 0:>4}  {built} / {idea.get('topic', '?')[:50]}")
     print(f"\nTotal: {len(posted)} posts, {total_in} inbound ({total_in / len(posted):.1f} per post)")
     for dim, groups in by.items():
         print(f"\nBy {dim} (inbound per post):")

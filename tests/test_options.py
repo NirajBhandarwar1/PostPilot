@@ -133,7 +133,7 @@ def test_pick_reason_uses_shown_numbers(env, monkeypatch):
                                     option("Kept demo"), option("Repo", kind="open-source-tool")],
                            recommended_reason="Option 2 is best.", recommended=2)
     monkeypatch.setattr(pipeline.brain, "make_options", lambda *a, **k: o)
-    res = pipeline.propose(bid, 3, send_email=False)
+    res = pipeline.propose(bid, 3, send_email=False, fresh=True)       # D23: ask for a new list
     assert res["recommended"] == 1 and res["recommended_reason"] == "Option 1 is best."
 
 
@@ -184,7 +184,7 @@ def test_build_emails_the_plan_back(monkeypatch, tmp_path):
     pipeline.build(bid, 1, option=1)
     subj, body, att, html = sent[0]
     assert "<h1" in html and "<pre" in html and "stop and tell me exactly what to do" in html
-    assert subj.startswith(f"[PostPilot #{bid}.1] Build plan ready")
+    assert subj.startswith(f"[PostPilot #{bid}.1 plan] Build plan ready")
     assert att[0][0] == "BUILD.md" and "# PART A" in att[0][1]
     assert "# PART A" in body and "Read BUILD.md. Build Part A one step at a time" in body      # readable in the email too
 

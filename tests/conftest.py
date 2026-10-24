@@ -21,3 +21,8 @@ def no_network(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("test tried to use the network")
     monkeypatch.setattr(urllib.request, "urlopen", boom)
+    import socket
+
+    def no_dns(*a, **k):                  # no real DNS lookups either (offline, fast)
+        raise OSError("test tried to resolve a host name")
+    monkeypatch.setattr(socket, "getaddrinfo", no_dns)
