@@ -30,7 +30,7 @@ CACHE_DAYS = 7
 
 # ---------- names ----------
 
-# Old model names. In posts they look dated; in free catalogs they are hidden (D7).
+# Old model names. In posts they look dated; in model catalogs they are hidden (D7).
 OUTDATED = re.compile(
     r"\b(GPT-?3\.5|GPT-?4o?|GPT-?4\.1|Llama[- ]?[23](?:\.\d)?|Mixtral|Mistral[- ]7B|"
     r"Claude[- ]?[23](?:\.\d)?|Gemini[- ]?1\.5|Gemini[- ]?2(?:\.\d)?|PaLM|Falcon)\b", re.I)
@@ -533,7 +533,7 @@ def check_idea(idea: dict, topic: dict, signals: list[dict], cat: Catalog,
         m = by_key.get(k)
         if not m:
             v.ok = False
-            v.reasons.append(f"{k} is not in a free model catalog")
+            v.reasons.append(f"{k} is not in a model catalog")
         elif VISION_NEED.search(idea.get("build_plan", "")) and m.vision is False:
             v.ok = False
             v.reasons.append(f"{k} cannot take image/video input")
@@ -599,6 +599,9 @@ ALLOWED_PACKAGES = {"requests", "pandas", "matplotlib", "numpy", "pydantic", "op
                     "pytest", "jsonschema", "pyyaml", "yaml", "tqdm", "packaging"}
 ALLOWED_HOSTS = {"api.openai.com", "api.groq.com", "openrouter.ai", "api.cloudflare.com",
                  "huggingface.co", "localhost", "127.0.0.1"}
+# Where setup commands may fetch from without a warning. Fixed on purpose: story links are scraped
+# and anyone can get a link trending, so they never become "known".
+SETUP_HOSTS = frozenset({"github.com", "raw.githubusercontent.com", "pypi.org", "files.pythonhosted.org"})
 STDLIB = set(getattr(__import__("sys"), "stdlib_module_names", ()))
 RISKY_CALLS = [
     (re.compile(r"\bsubprocess\.|\bos\.system\(|\bos\.popen\("), "runs a shell command"),

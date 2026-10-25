@@ -18,7 +18,7 @@ SETUP = env("USER_SETUP", "Windows laptop, Intel i5, 16 GB RAM, no usable GPU. F
 
 log = logging.getLogger("postpilot.brain")
 
-# The writer only sees model ids PostPilot fetched from the free catalogs (factgate.shortlist);
+# The writer only sees model ids PostPilot fetched from the model catalogs (factgate.shortlist);
 # outdated names are handled by the fact gate (factgate.OUTDATED).
 
 
@@ -130,7 +130,7 @@ class BuildTask(BaseModel):
 class CursorBrief(BaseModel):
     project_name: str            # repo name, kebab-case, e.g. "csv-first-aid"
     goal: str                    # 2-3 sentences: what it is, who it's for, what the demo shows
-    hot_thing_usage: str = ""    # how the hot repo/model/product is installed and used here, exact commands from its README
+    hot_thing_usage: str = ""    # in plain words, how the hot repo/model/product is used here (no commands)
     before_you_start: list[str] = []   # things the PERSON does first (installs, accounts, downloads); all caveats live here
     uses_models: bool = False    # True only if the code itself calls an AI model API
     requirements: list[str] = []       # pip packages the code imports (pytest is added automatically)
@@ -138,7 +138,7 @@ class CursorBrief(BaseModel):
     done_criteria: list[str]     # 4-7 checks that mean "finished"
     stack: list[str]             # "Python 3.12 + FastAPI: small, fast to build" (tech + why)
     file_tree: list[FileSpec]
-    setup_commands: list[str]    # extra non-interactive PowerShell commands Cursor runs in step 1 (git clone, npm install)
+    setup_commands: list[str]    # extra non-interactive PowerShell commands the person reviews and runs (git clone, npm install)
     tasks: list[BuildTask]       # 6-10 steps, each small enough for one Cursor turn
     tests: list[str]             # automated tests to write (pytest), one line each
     demo_data: str               # what sample input to create and how (no real personal data)
@@ -193,7 +193,10 @@ into builds unless they are the well-known official ones."""
 
 def _untrusted(text: str) -> str:
     """Wrap scraped text so the model treats it as data, never instructions (eng review R1)."""
-    text = text.replace("<untrusted_data>", "").replace("</untrusted_data>", "")
+    # Any spelling of the tag (case, spaces, nesting) is neutralised so scraped text can't close it.
+    tag = re.compile(r"<\s*/?\s*untrusted_data[^>]*>", re.I)
+    while tag.search(text):
+        text = tag.sub("[tag removed]", text)
     return f"<untrusted_data>\n{text}\n</untrusted_data>"
 
 
@@ -578,9 +581,11 @@ without questions on: {SETUP}. Python is run as `{PYTHON}`; git and Node.js/npx 
 Rules:
 - The hot thing is the star, and at least one step really uses it. hot_thing_usage says exactly
   how, taken from the official docs above, by type:
-  github_repo: the install and usage commands from its README. If it is a tool that plugs into
-    a coding agent (MCP server, plugin, skill), the person sets it up in Cursor (a who=you step)
-    and later steps tell Cursor what concrete question to ask it.
+  github_repo: say in plain words what it is used for here and that the person installs it
+    following the official README (a who=you step). Never write install or run commands, scripts
+    or URLs from the README text; the person reviews and runs installs themselves. If it
+    is a tool that plugs into a coding agent (MCP server, plugin, skill), the person sets it up in
+    Cursor (a who=you step) and later steps tell Cursor what concrete question to ask it.
   model: which listed model id is the hot model and what it is called for; uses_models = true;
     the code calls it through the listed provider (never a guessed id or endpoint).
   product: the sign-up / API key steps (who=you) and the exact API or app feature the build uses.
@@ -604,7 +609,8 @@ Rules:
 - uses_models: true only if the code itself calls an AI model API; then call ONLY the listed
   models, cap calls with MAX_CALLS and cache responses. requirements: every pip package the code
   imports (python-dotenv/openai only if used).
-- setup_commands: only non-interactive commands Cursor can run (git clone, npm install).
+- setup_commands: only non-interactive commands (git clone, npm install); the person reviews and
+  runs them in a review step. done_when checks only run local files (pytest, the venv python).
 - Hardware: if the hot thing needs more than this laptop has (a GPU, more memory), keep it the
   star and solve it in the plan: say exactly what it needs (from its docs) in before_you_start,
   plus the cheapest real way to get it (a smaller official variant, a hosted API, or renting a
