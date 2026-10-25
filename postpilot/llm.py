@@ -4,6 +4,7 @@ Providers are tried in the order of LLM_PROVIDERS; if one fails (rate limit, out
 twice) the next one gets the same request. Output is validated against a Pydantic model.
 """
 
+import contextlib
 import copy
 import json
 import logging
@@ -54,7 +55,7 @@ def paid_tokens_today() -> int:
 
 def _add_paid_tokens(n: int) -> None:
     from . import db
-    db.set_meta(_spend_key(), str(paid_tokens_today() + n))
+    db.add_meta_int(_spend_key(), n)       # one statement: the loop and the CLI can't lose updates
 
 
 def daily_cap() -> int:
@@ -62,6 +63,25 @@ def daily_cap() -> int:
 
 
 _cap_warned: set[str] = set()
+
+
+class BudgetExceeded(RuntimeError):
+    """The current token budget (e.g. one eval run) is used up; stop cleanly."""
+
+
+_BUDGET: dict | None = None
+
+
+@contextlib.contextmanager
+def token_budget(limit: int):
+    """Cap paid tokens for everything inside the block (eval runs, D24). Paid calls past the
+    limit raise BudgetExceeded instead of silently falling back to free models."""
+    global _BUDGET
+    _BUDGET = {"limit": limit, "used": 0}
+    try:
+        yield _BUDGET
+    finally:
+        _BUDGET = None
 
 
 def _over_cap(p: "Provider") -> bool:
@@ -113,6 +133,8 @@ def providers(role: str = "default") -> list[Provider]:
             "custom", env("CUSTOM_BASE_URL"), env("CUSTOM_MODEL"), env("CUSTOM_API_KEY"),
             strict_schema=env("CUSTOM_STRICT", "false").lower() == "true", extra={}),
     }
+    if role == "all":
+        return list(presets.values())
     default_order = env("LLM_PROVIDERS", "groq,ollama")
     order_text = env("WRITER_PROVIDERS", default_order) if role == "writer" else default_order
     order = [p.strip() for p in order_text.split(",") if p.strip()]
@@ -122,6 +144,11 @@ def providers(role: str = "default") -> list[Provider]:
         if p and p.base_url and p.model and p.api_key:
             out.append(p)
     return out
+
+
+def providers_all() -> list[Provider]:
+    """Every known provider preset, configured or not (for probes and diagnostics)."""
+    return providers("all")
 
 
 def available() -> bool:
@@ -165,6 +192,30 @@ def _extract_json(text: str) -> str:
 
 # ---------- the call ----------
 
+HOPELESS = re.compile(r"request too large|context[_ ]length|maximum context|too many tokens|"
+                      r"reduce the length|prompt is too long|payload too large", re.I)
+
+
+def probe(name: str) -> str:
+    """One tiny strict-JSON request to a provider: "ok", or why it failed. `postpilot doctor`
+    runs it on every backup in WRITER_PROVIDERS (eng review D21)."""
+    p = next((x for x in providers_all() if x.name == name), None)
+    if not p or not (p.base_url and p.model and p.api_key):
+        return "not configured"
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"],
+              "additionalProperties": False}
+    body = {"model": p.model, p.tokens_field: 400,
+            "messages": [{"role": "user", "content": 'Reply with the JSON {"ok": true}.'}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "Probe", "strict": True,
+                                                                      "schema": schema}}}
+    try:
+        resp = _post(p, body, timeout=120)
+        text = resp["choices"][0]["message"].get("content") or ""
+        return "ok" if json.loads(_extract_json(text)).get("ok") is True else f"unexpected reply: {text[:80]}"
+    except Exception as e:
+        return f"failed: {str(e)[:160]}"
+
+
 def _post(p: Provider, body: dict, timeout: int = 600) -> dict:
     req = urllib.request.Request(
         p.base_url.rstrip("/") + "/chat/completions",
@@ -178,6 +229,10 @@ def _post(p: Provider, body: dict, timeout: int = 600) -> dict:
                 return json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")[:500]
+            # A request that is too big will fail no matter how long we wait: move on at once
+            # instead of retrying for minutes (eng review D7). Busy/rate-limit errors still retry.
+            if e.code == 413 or HOPELESS.search(detail):
+                raise RuntimeError(f"{p.name} HTTP {e.code} (not retried): {detail}") from None
             if e.code in (429, 500, 502, 503) and attempt < 3:
                 wait = float(e.headers.get("retry-after") or 0) or 20 * (attempt + 1)
                 log.warning("%s HTTP %s, retrying in %.0fs: %s", p.name, e.code, wait, detail[:150])
@@ -195,12 +250,18 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
         raise RuntimeError("No model provider configured. Set GROQ_API_KEY (or another provider) in .env.")
     js = json_schema or strict_schema(schema)   # custom schema, e.g. with an enum of model ids
     errors = []
+    # Inside a token budget (the eval) only paid writers run: a silent fall-through to a free
+    # model would score the wrong model.
+    if _BUDGET is not None and any(p.paid for p in plist):
+        plist = [p for p in plist if p.paid]
     for p in plist:
         if _over_cap(p):
             errors.append(f"{p.name}: daily cap reached")
             continue
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         for attempt in range(2):
+            if p.paid and _BUDGET is not None and _BUDGET["used"] >= _BUDGET["limit"]:
+                raise BudgetExceeded(f"token budget of {_BUDGET['limit']:,} reached")
             body = {"model": p.model, "messages": messages,
                     p.tokens_field: int(max_tokens * p.token_scale), **p.extra}
             if effort and "reasoning_effort" in body:
@@ -222,7 +283,10 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
                 tally["in"] += usage.get("prompt_tokens") or 0
                 tally["out"] += usage.get("completion_tokens") or 0
                 if p.paid:
-                    _add_paid_tokens((usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0))
+                    spent = (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
+                    _add_paid_tokens(spent)
+                    if _BUDGET is not None:
+                        _BUDGET["used"] += spent
                 choice = resp["choices"][0]
                 if choice.get("finish_reason") == "length":
                     raise RuntimeError("output cut off (max_tokens)")
