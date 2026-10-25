@@ -16,11 +16,13 @@ The goal is to get noticed by people who hire in AI, by posting experiments rath
 3. **Email.** You get `[PostPilot #N] 3 AI post ideas`. Reply `1`, `2`, `3` or `skip`.
 4. **Options.** Your reply `2` brings `[PostPilot #N.2]`: 3-5 build options for that story,
    based on what is already viral (YouTube, GitHub, Hacker News). Always one "look what I
-   built" demo and one public GitHub repo. Reply `3` to pick option 3 (or reply `2 go` to the
-   first email to skip the menu).
+   built" demo and one public GitHub repo. Reply `3` to pick option 3, or `3 new` for a fresh
+   list (or reply `2 go` to the first email to skip the menu). Replies to the build-plan email
+   never start anything, so you can write notes there safely.
 5. **Build plan.** You get `BUILD.md` (emailed and saved to `../linkedin/builds/`). Part A is
    for Cursor: goal, stack, files, setup, models with exact base URLs and key names, 6-10 steps
-   each with a "Done when" check, tests and rules. Part B is for you: demo shot list, the
+   each with a "Done when" check, tests and rules. Anything that downloads, installs or runs
+   someone else's code is a 🧑 step or a 🧑⚠ line that you run yourself, never Cursor. Part B is for you: demo shot list, the
    LinkedIn post (humanized, `{{placeholders}}` for real results), first comment, fact checks.
 6. **You** open an empty folder in Cursor, add BUILD.md, tell it to build Part A, then record
    the demo, fill in the placeholders and post it yourself.
@@ -47,15 +49,16 @@ Fill in `D:\Trading\plan\linkedin\voice.md` too. Without it the drafts sound gen
 | --- | --- |
 | `python -m postpilot run` | keep running: scout every 3 days, check replies every 10 min |
 | `python -m postpilot scout [--no-email]` | scout once now |
-| `python -m postpilot options 4 2 [--no-email]` | 3-5 build options for idea 2 of batch #4 (what your email reply `2` does) |
-| `python -m postpilot build 4 2 --option 3` | build option 3 of that idea (reply `3` to the `#4.2` email); without `--option`, builds the rough idea |
+| `python -m postpilot options 4 2 [--no-email] [--fresh]` | build options for idea 2 of batch #4 (email reply `2`); saved options are resent, `--fresh` (reply `2 new`) makes a new list tagged `#4.2b` |
+| `python -m postpilot build 4 2 --option 3` | always writes a fresh BUILD.md for option 3 (an email reply resends an existing plan instead of paying twice) |
+| `python -m postpilot eval --builds [N]` | re-run N saved stories through options, BUILD.md and post with GPT-6 (max 60k tokens, keeps 100k of the day's cap for live emails); PASS/FAIL bars vs the last run |
 | `python -m postpilot check` | check email replies once |
 | `python -m postpilot status` | setup check and recent batches |
 | `python -m postpilot precommit` | secret check before you commit (blocks .env, real key values, key shapes) |
 | `python -m postpilot eval [N]` | replay the last N saved runs: fact-check failure rate and unverified claims per idea |
-| `python -m postpilot doctor` | live check: how many signals each trend source returns right now |
-| `python -m postpilot posted 5 <url>` | after you publish: record the LinkedIn link for batch #5 |
-| `python -m postpilot inbound 5 --recruiters 2 --founders 1` | record who reached out after that post |
+| `python -m postpilot doctor` | live check: how many signals each trend source returns right now, and whether each backup writer model answers |
+| `python -m postpilot posted 5 <url> [--build N]` | after you publish: record the LinkedIn link for batch #5 (latest build unless `--build`; BUILD.md's "After you post" shows the exact command) |
+| `python -m postpilot inbound 5 --recruiters 2 --founders 1` | record who reached out after that post (goes to the build you recorded as posted) |
 | `python -m postpilot report` | which formats and topics bring the most recruiters and founders |
 | `.venv\Scripts\python -m pytest -q` | run the tests (offline, ~1 second) |
 
@@ -90,14 +93,17 @@ Design and review decisions: `docs/designs/postpilot-content-engine.md`.
 ## Files
 
 ```
-postpilot/sources.py   free trend sources
-postpilot/llm.py       open-model client (Groq / OpenRouter / Ollama / any OpenAI-compatible)
-postpilot/brain.py     prompts: pick 3 ideas, build post + code
-postpilot/mailer.py    Gmail send + read replies (App Password)
-postpilot/pipeline.py  the cycle and the always-on loop
-postpilot/vendor/      humanizer + 21 hook formulas, from
-                       github.com/Jakeschincariol/linkedin-agent-skill (MIT)
-data/                  SQLite history and log (not committed)
+postpilot/sources.py    trend radar + per-idea research (YouTube, GitHub, HN, social, official docs)
+postpilot/brain.py      prompts and output schemas: topics, ideas, options, BUILD.md, post
+postpilot/llm.py        model client: GPT-6 writer, daily cap, ordered free backups, retries
+postpilot/factgate.py   fact check: live model catalogs, claims vs sources, code/command scans, cost
+postpilot/pipeline.py   the flow: scout, options, build, reply handling, the always-on loop, eval
+postpilot/render.py     what you see: the 3 emails (text + HTML) and the BUILD.md layout
+postpilot/mailer.py     Gmail send + read replies (App Password, DKIM-verified)
+postpilot/db.py         SQLite: batches, builds, per-build outcomes, merge-on-save
+postpilot/vendor/       humanizer + 21 hook formulas, from
+                        github.com/Jakeschincariol/linkedin-agent-skill (MIT)
+data/                   SQLite history and log (not committed)
 ```
 
 ## Model
