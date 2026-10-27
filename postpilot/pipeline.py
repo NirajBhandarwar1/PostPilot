@@ -332,12 +332,37 @@ def scout(send_email: bool = True) -> int | None:
         log.info("tokens %s: %d calls, %d in, %d out", model, u["calls"], u["in"], u["out"])
 
     if send_email and settings.has_email:
-        mailer.send(mailer.subject_for(batch_id, "What's hot in AI: reply with a number"), text,
-                    html=text_email(text))
-        db.update_batch(batch_id, status="sent")
+        _send_ideas(batch_id, text)
     else:
         log.info("email not configured or disabled: ideas saved to %s", ideas_dir)
     return batch_id
+
+
+def _send_ideas(batch_id: int, text: str) -> bool:
+    """Email the ideas. The ideas are already paid for and saved, so a failed send (wrong App
+    Password, no network) never raises: the batch is marked unsent and resend_unsent() retries
+    only the email. Raising here would make the loop buy a whole new scout every hour."""
+    try:
+        mailer.send(mailer.subject_for(batch_id, "What's hot in AI: reply with a number"), text,
+                    html=text_email(text))
+    except Exception:
+        log.exception("could not email batch #%d; the ideas are saved and the email will be retried", batch_id)
+        db.edit_batch(batch_id, lambda d: d.__setitem__("unsent", True))
+        return False
+    db.edit_batch(batch_id, lambda d: d.pop("unsent", None), status="sent")
+    return True
+
+
+def resend_unsent() -> None:
+    """Retry the ideas email of the newest batch whose send failed. Older failed batches are
+    stale (a newer scout replaced them) and stay saved as drafts."""
+    if not settings.has_email:
+        return
+    for b in db.recent_batches(5):
+        data = json.loads(b["ideas_json"])
+        if data.get("unsent") and b["status"] == "draft":
+            _send_ideas(b["id"], render_ideas(b["id"], data))
+            return
 
 
 # ---------- step 2: build ----------
@@ -773,14 +798,11 @@ def handle_reply(batch_id: int, idea_ref: int | str | None, choice: str, reply_i
 
 
 def _notify(subject: str, body: str) -> None:
-    """A short status email. A failure to send it is logged, never raised: the reply it is about
-    has been handled either way."""
-    if not settings.has_email:
-        return
-    try:
+    """A short status email. If it can't be sent the error escapes: check_replies then leaves the
+    reply unhandled and retries it (saved lists and plans are resent, nothing is paid twice), so
+    a failed build never ends in silence."""
+    if settings.has_email:
         mailer.send(subject, body)
-    except Exception:
-        log.exception("could not send: %s", subject)
 
 
 def run_forever() -> None:
@@ -797,6 +819,10 @@ def run_forever() -> None:
             retry_at = datetime.fromtimestamp(time.time() + RETRY_AFTER_FAILURE_S, timezone.utc)
             log.exception("scout failed; retrying at %s", retry_at.isoformat(timespec="minutes"))
             db.set_meta("retry_scout_at", retry_at.isoformat(timespec="seconds"))
+        try:
+            resend_unsent()
+        except Exception:
+            log.exception("resending the ideas email failed")
         try:
             check_replies()
         except Exception:

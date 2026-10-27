@@ -84,7 +84,7 @@ def render_ideas(batch_id: int, batch: dict) -> str:
     writers = batch.get("writers") or []
     primary = (llm.providers("writer") or [None])[0]
     if writers and primary and not any(w.startswith(primary.name + ":") for w in writers):
-        out.append(f"Note: {primary.name} did not answer (outage or daily cap), so a backup model "
+        out.append(f"Note: {primary.name} did not answer (outage, no credit or daily cap), so a backup model "
                    f"({', '.join(writers)}) wrote this batch. Expect weaker ideas.")
     return "\n".join(out)
 
@@ -168,10 +168,13 @@ THIRD_PARTY_RE = re.compile(
     r"Invoke-WebRequest|Invoke-RestMethod|Invoke-Expression|Start-BitsTransfer|\b(?:iwr|irm|iex)\b|"
     r"\bcertutil\b|\bdocker\s+(?:run|compose|pull)\b|\bbash\s+\S+\.sh\b|\.ps1\b|"
     r"\b(?:make|cargo|winget|choco)\s+install\b|\b(?:huggingface-cli|hf)\s+download\b|\bgit\s+lfs\b|"
-    r"\bclon(?:e|es|ed|ing)\b|"
-    # other plain words count when they come with a site or a run: "download X from example.com and run it"
-    r"\b(?:download|install|fetch)\w*\b.{0,80}?(?:https?://|\b[\w-]+\.(?:com|io|co|org|dev|ai|sh|net|app|so)\b|"
-    r"\b(?:run|execute|launch|open|start|double-click|unzip|extract|load)\b)", re.I)
+    # Plain words alone ("a clone button", "install the dependencies", "a README with install steps")
+    # are ordinary coding. They count only next to a link/site, or when something is fetched and then
+    # launched: "clone github.com/x/y", "download installer.exe from example.com", "download X and execute it".
+    r"\b(?:clon\w*|download\w*|install\w*|fetch\w*)\b.{0,80}?"
+    r"(?:https?://|\b(?:github|gitlab|bitbucket)\.com\b|\.git\b|\b[\w-]+\.(?:com|io|org|dev|ai|net)\b)|"
+    r"\b(?:download\w*|fetch\w*)\b.{0,60}?\b(?:and|then)\s+(?:execute|launch|double-click|sudo|"
+    r"run\s+(?:it|them|the\s+(?:installer|script|binary|setup|exe|tool|file)))\b", re.I)
 
 
 def _plain(text: str) -> str:
