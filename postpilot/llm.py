@@ -69,6 +69,17 @@ class BudgetExceeded(RuntimeError):
     """The current token budget (e.g. one eval run) is used up; stop cleanly."""
 
 
+class NoCredit(RuntimeError):
+    """The provider says the account has no credit left. Waiting won't help: skip it for a while."""
+
+
+# OpenAI answers HTTP 429 both for "too fast" (retry) and for "no credit left" (never retry).
+NO_CREDIT = re.compile(r"insufficient_quota|credit_balance|no credits remaining|exceeded your current quota|"
+                       r"billing_hard_limit|payment required", re.I)
+NO_CREDIT_PAUSE_S = 30 * 60        # then try the provider again, in case you added credit
+_no_credit_until: dict[str, float] = {}
+
+
 _BUDGET: dict | None = None
 
 
@@ -146,11 +157,6 @@ def providers(role: str = "default") -> list[Provider]:
     return out
 
 
-def providers_all() -> list[Provider]:
-    """Every known provider preset, configured or not (for probes and diagnostics)."""
-    return providers("all")
-
-
 def available() -> bool:
     return bool(providers())
 
@@ -199,7 +205,7 @@ HOPELESS = re.compile(r"request too large|context[_ ]length|maximum context|too 
 def probe(name: str) -> str:
     """One tiny strict-JSON request to a provider: "ok", or why it failed. `postpilot doctor`
     runs it on every backup in WRITER_PROVIDERS (eng review D21)."""
-    p = next((x for x in providers_all() if x.name == name), None)
+    p = next((x for x in providers("all") if x.name == name), None)
     if not p or not (p.base_url and p.model and p.api_key):
         return "not configured"
     schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"],
@@ -231,6 +237,8 @@ def _post(p: Provider, body: dict, timeout: int = 600) -> dict:
             detail = e.read().decode("utf-8", "replace")[:500]
             # A request that is too big will fail no matter how long we wait: move on at once
             # instead of retrying for minutes (eng review D7). Busy/rate-limit errors still retry.
+            if e.code in (402, 429) and NO_CREDIT.search(detail):
+                raise NoCredit(f"{p.name} has no credit left (add credit, then it is used again): {detail[:200]}") from None
             if e.code == 413 or HOPELESS.search(detail):
                 raise RuntimeError(f"{p.name} HTTP {e.code} (not retried): {detail}") from None
             if e.code in (429, 500, 502, 503) and attempt < 3:
@@ -257,6 +265,9 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
     for p in plist:
         if _over_cap(p):
             errors.append(f"{p.name}: daily cap reached")
+            continue
+        if time.time() < _no_credit_until.get(p.name, 0):       # known empty: go straight to the next one
+            errors.append(f"{p.name}: no credit")
             continue
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         for attempt in range(2):
@@ -302,6 +313,12 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
                     {"role": "assistant", "content": text[:2000]},
                     {"role": "user", "content": f"That did not match the schema: {str(e)[:500]}. "
                                                 "Send the corrected JSON only."}]
+            except NoCredit as e:
+                _no_credit_until[p.name] = time.time() + NO_CREDIT_PAUSE_S
+                log.warning("%s: no credit left, using the next provider for the next %d min. %s",
+                            p.name, NO_CREDIT_PAUSE_S // 60, str(e)[:200])
+                errors.append(f"{p.name}: no credit")
+                break
             except Exception as e:
                 log.warning("%s failed: %s", p.name, str(e)[:300])
                 errors.append(f"{p.name}: {str(e)[:200]}")
