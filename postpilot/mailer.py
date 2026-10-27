@@ -97,11 +97,6 @@ def parse_reply(body: str, n_ideas: int = 3) -> tuple[str | None, list[int] | No
     return m.group(1) + (" go" if go else ""), ratings
 
 
-def parse_choice(body: str) -> str | None:
-    """Read the user's own words (above the quoted email) and return '1'..'3', 'skip', or None."""
-    return parse_reply(body)[0]
-
-
 def sender_verified(msg: email.message.Message, sender: str) -> bool:
     """Gmail's own check that the reply really came from `sender` (eng review O5): the
     Authentication-Results header must show dkim=pass for the sender's domain, or dmarc=pass
@@ -110,7 +105,12 @@ def sender_verified(msg: email.message.Message, sender: str) -> bool:
     # Only Gmail's own result counts: it is the TOP Authentication-Results header and names
     # exactly mx.google.com. A sender can add lines of its own further down (or name a lookalike).
     headers = msg.get_all("Authentication-Results") or []
-    top = str(headers[0]).strip().lower() if headers else ""
+    if not headers:
+        # Mail you send from your own Gmail account to yourself never goes through Gmail's incoming
+        # checks, so it has no such header. Mail from outside always gets one, so a missing header
+        # means the message came from inside your own account (seen on a real reply, 2026-10-28).
+        return bool(settings.gmail_address) and sender.lower() == settings.gmail_address.lower()
+    top = str(headers[0]).strip().lower()
     if top.split(";", 1)[0].strip() != "mx.google.com" or not domain:
         return False
     results = top

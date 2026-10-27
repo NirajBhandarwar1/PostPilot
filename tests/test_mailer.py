@@ -2,7 +2,7 @@
 
 import pytest
 
-from postpilot.mailer import parse_choice, parse_reply
+from postpilot.mailer import parse_reply
 
 
 @pytest.mark.parametrize("body,want", [
@@ -13,7 +13,7 @@ from postpilot.mailer import parse_choice, parse_reply
     ("Build idea 1, looks fun", "1"),
 ])
 def test_existing_replies(body, want):
-    assert parse_choice(body) == want
+    assert parse_reply(body)[0] == want
 
 
 def test_rating_form():
