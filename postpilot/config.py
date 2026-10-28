@@ -29,7 +29,7 @@ def env(name: str, default: str = "") -> str:
 
 @dataclass(frozen=True)
 class Settings:
-    cycle_days: float = float(env("CYCLE_DAYS", "3"))
+    cycle_days: float = float(env("CYCLE_DAYS", "1"))
     check_minutes: float = float(env("CHECK_MINUTES", "10"))
 
     gmail_address: str = env("GMAIL_ADDRESS")

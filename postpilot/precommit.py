@@ -16,8 +16,9 @@ from .config import ROOT
 # Settings in .env that are configuration, not secrets. Their values (model names, provider
 # lists) legitimately appear in code and docs, so matching them would block every commit.
 NOT_SECRET = re.compile(
-    r"^(LLM_PROVIDERS|WRITER_PROVIDERS|\w+_MODEL|REASONING_EFFORT|USER_SETUP|CURRENT_MODELS|CYCLE_DAYS|CHECK_MINUTES|"
-    r"RADAR_DAYS|OUTPUT_DIR|VOICE_FILE|OLLAMA_URL|CUSTOM_BASE_URL|CUSTOM_STRICT)$")
+    r"^(LLM_PROVIDERS|WRITER_PROVIDERS|\w+_MODEL|(?:\w+_)?REASONING_EFFORT|USER_SETUP|CURRENT_MODELS|CYCLE_DAYS|"
+    r"CHECK_MINUTES|RADAR_DAYS|OUTPUT_DIR|VOICE_FILE|OLLAMA_URL|CUSTOM_BASE_URL|CUSTOM_STRICT|"
+    r"OPENAI_DAILY_TOKENS|PAID_EXPERIMENTS)$")
 
 # Known key shapes: a prefix plus a long run of key characters (bare prefixes like "sk-" or
 # "hf_" would also match ordinary words such as "risk-" or "hf_api").

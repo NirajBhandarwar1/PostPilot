@@ -1,6 +1,6 @@
 """PostPilot command line.
 
-  python -m postpilot run              keep running: scout every 3 days, build when you reply
+  python -m postpilot run              keep running: scout every day, build when you reply
   python -m postpilot scout            one scout now (emails if Gmail is set up)
   python -m postpilot scout --no-email one scout, save to file only
   python -m postpilot options 4 2      3-5 build options for idea 2 of batch #4

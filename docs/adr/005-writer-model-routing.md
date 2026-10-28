@@ -10,7 +10,7 @@ The project started free-only (Groq, Cloudflare, OpenRouter). In a bake-off on t
 ## Decision
 - **Writer:** GPT-6 Sol for topics, ideas, options, BUILD.md and posts.
 - **Cap:** at most 300,000 GPT-6 tokens per day (`OPENAI_DAILY_TOKENS`); past it, backups take over and the email says so.
-- **Backup order:** openai, cloudflare (gpt-oss-120b), openrouter (free), qwen, groq; each new backup is confirmed with one live JSON-schema call before it's enabled.
+- **Backup order:** openai, groq (gpt-oss-120b), cloudflare (gpt-oss-120b); each new backup is confirmed with one live JSON-schema call before it's enabled (`postpilot doctor`). *Updated 2026-10-28 after a live comparison on one saved scout (ideas, options, BUILD.md + post): Groq gpt-oss wrote ideas best and fastest (3 of 5 kept in 3 min) and wrote the plan, but its free limit rejects the options request, which then fails fast to Cloudflare, the only free model that finished all three stages (slower: 2 of 7 ideas in 8 min). Qwen3.8 on Groq kept 0 of 7 ideas and rejected the large requests, so it is out. OpenRouter's configured free model had become paid (404), so it is out until a working free model is chosen.*
 - **Retries:** "request too large" is never retried; busy 429s and 5xx get up to 3 retries.
 - **Eval budget:** the eval has its own 60k-token limit per run and never leaves the live loop under 100k for the day.
 

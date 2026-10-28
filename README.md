@@ -1,6 +1,6 @@
 # PostPilot
 
-An always-on agent that finds what's hot in AI every 3 days, emails you 3 LinkedIn post ideas,
+An always-on agent that finds what's hot in AI every day, emails you 3 LinkedIn post ideas,
 and when you reply with a number, builds that idea: the experiment code, the step-by-step plan,
 and a humanized post draft ready to fill in and paste.
 
@@ -11,7 +11,7 @@ The goal is to get noticed by people who hire in AI, by posting experiments rath
 1. **Scout.** Pulls trending items from AI news feeds (Google News, TechCrunch, The Verge,
    OpenAI, Google AI, Hugging Face, Simon Willison), Hacker News, new GitHub repos and
    Hugging Face papers. All free, no keys.
-2. **Pick.** An open-source model picks 3 ideas you can build, test or compare in about an hour. Each one
+2. **Pick.** The writer model (GPT-6 first, free models as backup) picks 3 ideas you can build, test or compare in about an hour. Each one
    targets a different role family and skips topics you've already covered.
 3. **Email.** You get `[PostPilot #N] 3 AI post ideas`. Reply `1`, `2`, `3` or `skip`.
 4. **Options.** Your reply `2` brings `[PostPilot #N.2]`: 3-5 build options for that story,
@@ -47,7 +47,7 @@ Fill in `D:\Trading\plan\linkedin\voice.md` too. Without it the drafts sound gen
 
 | command | does |
 | --- | --- |
-| `python -m postpilot run` | keep running: scout every 3 days, check replies every 10 min |
+| `python -m postpilot run` | keep running: scout every day (`CYCLE_DAYS` in `.env`), check replies every 10 min |
 | `python -m postpilot scout [--no-email]` | scout once now |
 | `python -m postpilot options 4 2 [--no-email] [--fresh]` | build options for idea 2 of batch #4 (email reply `2`); saved options are resent, `--fresh` (reply `2 new`) makes a new list tagged `#4.2b` |
 | `python -m postpilot build 4 2 --option 3` | always writes a fresh BUILD.md for option 3 (an email reply resends an existing plan instead of paying twice) |
@@ -65,7 +65,9 @@ Fill in `D:\Trading\plan\linkedin\voice.md` too. Without it the drafts sound gen
 ## Models (updated 2026-10-22)
 
 - Topic finding and all writing (ideas, posts, code) use `WRITER_PROVIDERS` in `.env`:
-  `openai,qwen,groq` = GPT-6 Sol first, then free Qwen3.8 and gpt-oss on Groq as backups.
+  `openai,groq,cloudflare` = GPT-6 Sol first, then free gpt-oss-120b on Groq (best free idea and
+  plan writer, but its free limit is too small for the options request), then gpt-oss-120b on
+  Cloudflare (slower, but takes every request size). A live comparison on 2026-10-28 ranked them.
   Chosen by a bake-off on the same viral stories: GPT-6 Sol was the only model with sharp,
   feasible ideas and no invented results. About 8K input + 4K output tokens per batch.
 - Remove `openai` from `WRITER_PROVIDERS` to run 100% free again.
@@ -106,16 +108,23 @@ postpilot/vendor/       humanizer + 21 hook formulas, from
 data/                   SQLite history and log (not committed)
 ```
 
-## Model
+## Providers
 
-Open-source models only, through any OpenAI-compatible endpoint (`postpilot/llm.py`).
-Providers in `LLM_PROVIDERS` are tried in order; if one fails, the next one takes over.
+Any OpenAI-compatible endpoint works (`postpilot/llm.py`). Two lists in `.env` decide who answers,
+and the first provider that works wins; if it fails, the next one takes over:
+
+- `WRITER_PROVIDERS` for ideas, build plans and posts. Recommended: `openai,groq,cloudflare`.
+- `LLM_PROVIDERS` for everything else, and for the writer too when `WRITER_PROVIDERS` is not set.
 
 | provider | model | cost | notes |
 | --- | --- | --- | --- |
-| Groq (default) | `openai/gpt-oss-120b` | free tier | fast, strict JSON; ~8K tokens/min, prompts are sized for it |
+| OpenAI (`openai`) | `gpt-6-sol` | paid, capped | first writer; `OPENAI_DAILY_TOKENS` is the daily cap (code default 100000) |
+| Groq (`groq`, `qwen`) | `openai/gpt-oss-120b`, `qwen/qwen3.8-27b` | free tier | fast, strict JSON; ~8K tokens/min, prompts are sized for it |
 | OpenRouter | `openai/gpt-oss-120b:free` | free tier | backup; ~50 requests/day on free |
+| Cloudflare | `@cf/openai/gpt-oss-120b` | free tier | optional backup |
 | Ollama (local) | `qwen3:8b` | free | runs on this laptop, slow, weaker writing |
-| custom | e.g. DeepSeek V4.1 Flash, Kimi K3 | cents/cycle | best open-weight quality, paid host |
+| custom | e.g. DeepSeek V4.1 Flash, Kimi K3 | cents/cycle | any paid or rented host |
 
-A cycle uses 1 model call to pick ideas and 2 per build, well inside free limits.
+Cost: a scout is about 12K tokens, and each build plan a few times that, so the default cap
+covers several batches a day. Past the cap the free backups write and the email says so.
+`python -m postpilot doctor` tests that each backup really answers. Every setting is in `.env.example`.
