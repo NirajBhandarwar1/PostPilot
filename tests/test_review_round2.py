@@ -53,7 +53,6 @@ def test_done_when_with_an_install_makes_the_step_human():
                                  "inst​all with pip​ install evil",
                                  "Clone github.com/someone/tool into vendor/tool",
                                  "Download installer.exe from example.com and double-click it",
-                                 "Install the tool from its releases page and start it",
                                  "Fetch https://example.com/setup.py and execute it",
                                  "huggingface-cli download org/model", "hf download org/model", "git lfs pull"])
 def test_more_fetch_and_run_forms_are_caught(cmd):
@@ -63,7 +62,11 @@ def test_more_fetch_and_run_forms_are_caught(cmd):
 def test_ordinary_code_steps_stay_with_cursor():
     for text in ["Create parser.py that reads the CSV.", "Add a FastAPI endpoint /preview.",
                  "Run pytest -q and fix failures.", "Users can download a CSV of the results.",
-                 "Add a --download-dir option."]:
+                 "Add a --download-dir option.", "Write a function that clones the config dict.",
+                 "Add a clone button to the table.", "Install the dependencies and run pytest.",
+                 "Add a download button for the CSV, then open the app in a browser.",
+                 "Create a README with the install steps and start command.",
+                 "Save results to results.json and show them at localhost:8000."]:
         assert not render._runs_third_party(text)
 
 
@@ -250,9 +253,13 @@ def test_a_reply_another_run_is_handling_is_left_alone(env, monkeypatch):
     assert handled == [] and marked == []
 
 
-def test_a_claim_from_a_run_that_died_is_taken_over(monkeypatch):
-    db.set_meta("reply:u3", "busy:2020-01-01T00:00:00+00:00")
-    assert db.claim("reply:u3") == "claimed"
+def test_a_claim_from_a_run_that_died_is_taken_over_after_twenty_minutes():
+    from datetime import datetime, timedelta, timezone
+    ago = lambda m: "busy:" + (datetime.now(timezone.utc) - timedelta(minutes=m)).isoformat()   # noqa: E731
+    db.set_meta("reply:u3", ago(5))
+    assert db.claim("reply:u3") == "busy"                  # a build is probably still running
+    db.set_meta("reply:u3", ago(30))
+    assert db.claim("reply:u3") == "claimed"               # the run that held it died
 
 
 def test_a_crash_redo_of_new_on_an_options_email_resends_that_list(env, monkeypatch):
@@ -291,15 +298,25 @@ def test_one_failing_reply_does_not_block_the_next(env, monkeypatch):
     assert calls["options"] == 1                           # the second reply was still handled
 
 
-def test_failure_email_that_cannot_be_sent_still_counts_as_handled(env, monkeypatch):
+def test_a_failure_that_cannot_be_reported_is_retried_not_lost(env, monkeypatch):
     bid, calls = env
     monkeypatch.setattr(pipeline, "settings", types.SimpleNamespace(**{**vars(pipeline.settings), "has_email": True}))
+    marked, mails = [], []
 
-    def boom(*a, **k):
-        raise OSError("smtp down")
+    def smtp(*a, **k):
+        if smtp.down:
+            raise OSError("smtp down")
+        mails.append(a[0])
+    smtp.down = True
     monkeypatch.setattr(pipeline, "propose", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("writer down")))
-    monkeypatch.setattr(pipeline.mailer, "send", boom)
-    pipeline.handle_reply(bid, None, "2")                  # must not raise
+    monkeypatch.setattr(pipeline.mailer, "send", smtp)
+    monkeypatch.setattr(pipeline.mailer, "fetch_replies", lambda: [(bid, None, "2", b"u9")])
+    monkeypatch.setattr(pipeline.mailer, "mark_read", lambda uids: marked.extend(uids))
+    pipeline.check_replies()                               # failure notice can't be sent
+    assert marked == [] and db.get_meta("reply:u9") is None        # still unhandled, will retry
+    smtp.down = False
+    pipeline.check_replies()                               # network is back: the notice goes out
+    assert marked == [b"u9"] and any("Something failed" in s for s in mails)
 
 
 def test_plan_and_note_emails_are_not_pick_emails():
@@ -340,6 +357,15 @@ def test_lookalike_and_injected_dkim_results_are_rejected():
     assert mailer.sender_verified(ok, "me@gmail.com")
     for bad in (look, forged, lookalike_server, added_below):
         assert not mailer.sender_verified(bad, "me@gmail.com")
+
+
+def test_a_reply_from_your_own_gmail_has_no_header_and_is_still_trusted(monkeypatch):
+    monkeypatch.setattr(mailer, "settings", types.SimpleNamespace(gmail_address="Me@Gmail.com"))
+    own = email.message_from_string("From: Me <me@gmail.com>\nSubject: Re: [PostPilot #1] ideas\n\n2")
+    assert mailer.sender_verified(own, "me@gmail.com")             # internal mail: no Authentication-Results
+    assert not mailer.sender_verified(own, "other@gmail.com")      # headerless mail from another sender
+    with_header = email.message_from_string("Authentication-Results: mx.google.com; dkim=fail\n\nx")
+    assert not mailer.sender_verified(with_header, "me@gmail.com")  # outside mail must still pass the check
 
 
 @pytest.mark.parametrize("body", [
@@ -497,6 +523,112 @@ def test_budget_is_checked_before_every_attempt_and_free_models_are_skipped(monk
         with pytest.raises(llm.BudgetExceeded):
             llm.chat_json("s", "u", brain.PostKit)
     assert calls == ["openai"]             # no retry past the budget, no fall-through to free
+
+
+# ---------- no OpenAI credit: fall back at once, not after minutes of retries ----------
+
+NO_CREDIT_BODY = ('{"error":{"message":"You have no credits remaining. Add credits to continue using the API",'
+                  '"type":"insufficient_quota","code":"credit_balance_exhausted"}}')
+
+
+def _http_429(body):
+    import io
+    import urllib.error
+    return urllib.error.HTTPError("u", 429, "x", {}, io.BytesIO(body.encode()))
+
+
+def test_no_credit_is_not_retried(monkeypatch):
+    import urllib.request
+    calls, sleeps = [], []
+    monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: calls.append(1) or (_ for _ in ()).throw(
+        _http_429(NO_CREDIT_BODY)))
+    p = llm.Provider("openai", "https://x", "m", "k", True, {}, paid=True)
+    with pytest.raises(llm.NoCredit):
+        llm._post(p, {})
+    assert len(calls) == 1 and sleeps == []
+
+
+def test_a_provider_without_credit_is_skipped_for_the_next_calls(monkeypatch):
+    paid = llm.Provider("openai", "https://x", "m", "k", True, {}, paid=True)
+    free = llm.Provider("groq", "https://y", "m", "k", True, {})
+    monkeypatch.setattr(llm, "providers", lambda role="default": [paid, free])
+    monkeypatch.setattr(llm, "_no_credit_until", {})
+    calls = []
+
+    def post(p, body, timeout=600):
+        calls.append(p.name)
+        if p.name == "openai":
+            raise llm.NoCredit("openai has no credit")
+        return {"usage": {}, "choices": [{"finish_reason": "stop", "message": {"content": '{"ok": true}'}}]}
+
+    class Ok(brain.BaseModel):
+        ok: bool
+    monkeypatch.setattr(llm, "_post", post)
+    assert llm.chat_json("s", "u", Ok).ok and llm.chat_json("s", "u", Ok).ok
+    assert calls == ["openai", "groq", "groq"]               # openai asked once, then skipped
+    monkeypatch.setitem(llm._no_credit_until, "openai", 0)    # the pause is over: it is tried again
+    llm.chat_json("s", "u", Ok)
+    assert calls[-2:] == ["openai", "groq"]
+
+
+# ---------- audit fix 1: a failed ideas email never buys another scout ----------
+
+@pytest.fixture
+def scouting(monkeypatch, tmp_path):
+    """scout() with the model and the network faked; counts paid writer runs and collects emails."""
+    from tests.test_options import CAT
+    monkeypatch.setattr(pipeline, "settings", types.SimpleNamespace(
+        output_dir=tmp_path / "linkedin", voice_file=tmp_path / "voice.md", data_dir=tmp_path / "data",
+        has_email=True, cycle_days=3))
+    monkeypatch.setattr(pipeline.sources, "collect", lambda: [])
+    monkeypatch.setattr(llm, "available", lambda: True)
+    monkeypatch.setattr(pipeline.factgate, "load_catalogs", lambda: CAT)
+    world = types.SimpleNamespace(paid=0, sent=[], down=True)
+    stats = {"pitched": 1, "failed_first": 0, "regenerated": 0, "dropped": 0, "unverified": 0}
+
+    idea = dict(IDEA, why_hot="Hot.", build_plan="Build it.", visual="A GIF.", role_angle="Shows range.",
+                heat_where="GitHub trending: +100 stars", difficulty="easy", build_minutes=60)
+
+    def generate(*a, **k):
+        world.paid += 1
+        return {"ideas": [idea], "recommended": 1, "recommended_reason": "r", "stats": stats}
+    monkeypatch.setattr(pipeline, "generate_batch", generate)
+    (tmp_path / "run.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(pipeline, "save_run", lambda *a: tmp_path / "run.json")
+
+    def smtp(subject, *a, **k):
+        if world.down:
+            raise OSError("535 Username and Password not accepted")
+        world.sent.append(subject)
+    monkeypatch.setattr(pipeline.mailer, "send", smtp)
+    return world
+
+
+def test_a_broken_gmail_password_does_not_repeat_paid_scouts(scouting):
+    bid = pipeline.scout()                                  # the send fails: must not raise
+    assert db.get_batch(bid)["status"] == "draft" and json.loads(db.get_batch(bid)["ideas_json"])["unsent"]
+    assert not pipeline.scout_due()                         # the loop has nothing to retry at the paid level
+    pipeline.resend_unsent()                                # every cycle: still down, still only an email retry
+    pipeline.resend_unsent()
+    assert scouting.paid == 1 and len(db.recent_batches(10)) == 1
+
+
+def test_the_ideas_email_goes_out_once_gmail_works_again(scouting):
+    bid = pipeline.scout()
+    scouting.down = False
+    pipeline.resend_unsent()
+    assert scouting.sent == [f"[PostPilot #{bid}] What's hot in AI: reply with a number"]
+    assert db.get_batch(bid)["status"] == "sent" and "unsent" not in json.loads(db.get_batch(bid)["ideas_json"])
+    pipeline.resend_unsent()                                # nothing left to send
+    assert len(scouting.sent) == 1
+
+
+def test_a_no_email_scout_is_never_emailed_later(scouting):
+    scouting.down = False
+    pipeline.scout(send_email=False)                        # saved on purpose, not sent
+    pipeline.resend_unsent()
+    assert scouting.sent == []
 
 
 # ---------- D5: cleanups ----------

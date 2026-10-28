@@ -149,7 +149,7 @@ def test_failed_scout_retries_in_an_hour(monkeypatch):
     retry = datetime.fromisoformat(db.get_meta("retry_scout_at"))
     left = (retry - datetime.now(timezone.utc)).total_seconds()
     assert 3000 < left <= 3600
-    assert db.get_meta("last_scout_at") is None              # the 3-day clock was not restarted
+    assert db.get_meta("last_scout_at") is None              # the scout clock was not restarted
     assert pipeline.scout_due() is False
     db.set_meta("retry_scout_at", (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat())
     assert pipeline.scout_due() is True

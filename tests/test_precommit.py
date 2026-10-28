@@ -17,6 +17,13 @@ def test_secret_values_skip_config(tmp_path):
     assert set(vals) == {"GROQ_API_KEY", "GMAIL_APP_PASSWORD"}
 
 
+def test_documented_settings_are_not_treated_as_secrets(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("OPENAI_DAILY_TOKENS=300000\nPAID_EXPERIMENTS=force\nOPENAI_REASONING_EFFORT=medium\n"
+                   "OPENAI_API_KEY=sk-realvalue-1234567890\n", encoding="utf-8")
+    assert set(precommit.secret_values(env)) == {"OPENAI_API_KEY"}
+
+
 def test_blocks_real_value_without_printing_it(tmp_path):
     secrets = precommit.secret_values(make_env(tmp_path))
     f = tmp_path / "notes.md"

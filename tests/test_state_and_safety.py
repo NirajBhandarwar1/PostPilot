@@ -331,9 +331,9 @@ def test_busy_rate_limit_is_still_retried(monkeypatch):
 
 def test_probe_reports_unconfigured_and_failures(monkeypatch):
     from postpilot import llm
-    monkeypatch.setattr(llm, "providers_all", lambda: [llm.Provider("openrouter", "https://x", "m", "", True, {})])
+    monkeypatch.setattr(llm, "providers", lambda role="default": [llm.Provider("openrouter", "https://x", "m", "", True, {})])
     assert llm.probe("openrouter") == "not configured"
-    monkeypatch.setattr(llm, "providers_all", lambda: [llm.Provider("cloudflare", "https://x", "m", "k", True, {})])
+    monkeypatch.setattr(llm, "providers", lambda role="default": [llm.Provider("cloudflare", "https://x", "m", "k", True, {})])
     monkeypatch.setattr(llm, "_post", lambda p, b, timeout=0: {"choices": [{"message": {"content": '{"ok": true}'}}]})
     assert llm.probe("cloudflare") == "ok"
 
