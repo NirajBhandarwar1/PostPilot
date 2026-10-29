@@ -1,0 +1,12 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+  - repo: local
+    hooks:
+      - id: no-secrets
+        name: no secrets in staged files
+        entry: python -m postpilot precommit
+        language: system
+        pass_filenames: false

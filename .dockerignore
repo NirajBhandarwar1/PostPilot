@@ -1,0 +1,12 @@
+.env
+.venv
+.git
+.gstack
+data
+output
+voice.md
+tests
+docs
+experiments
+__pycache__
+*.egg-info

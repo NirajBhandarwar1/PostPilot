@@ -1,0 +1,26 @@
+name: Bug report
+description: Something broke or behaved wrongly
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The command you ran (`python -m postpilot ...`) and what you replied by email, if relevant.
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, and which providers are in WRITER_PROVIDERS (never paste keys).
+  - type: textarea
+    id: log
+    attributes:
+      label: Log output
+      description: Remove any email addresses, tokens or keys before pasting.
+      render: text

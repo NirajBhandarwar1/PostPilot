@@ -6,3 +6,9 @@ __pycache__/
 .gstack/
 .pytest_cache/
 CLAUDE.md
+*.egg-info/
+.coverage
+.mypy_cache/
+.ruff_cache/
+output/
+voice.md
