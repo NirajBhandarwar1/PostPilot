@@ -1,5 +1,7 @@
 # PostPilot
 
+[![CI](https://github.com/NirajBhandarwar1/PostPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/NirajBhandarwar1/PostPilot/actions/workflows/ci.yml) ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 An always-on agent that finds what's hot in AI every day, emails you 3 LinkedIn post ideas,
 and when you reply with a number, builds that idea: the experiment code, the step-by-step plan,
 and a humanized post draft ready to fill in and paste.
@@ -30,18 +32,30 @@ The goal is to get noticed by people who hire in AI, by posting experiments rath
 PostPilot never posts to LinkedIn. Automating a personal profile breaks LinkedIn's terms, and
 the drafts never make up results.
 
-## Setup (Windows)
+## Setup
 
-```bat
-cd D:\Trading\plan\postpilot
-copy .env.example .env      & REM then fill in .env
-.venv\Scripts\python -m postpilot status
-.venv\Scripts\python -m postpilot test-email
-.venv\Scripts\python -m postpilot scout       & REM first batch, right now
-start.bat                                      & REM keep it running
+Needs Python 3.12+, a Gmail account with an [App Password](https://myaccount.google.com/apppasswords),
+and at least one free model key (Groq is the quickest: https://console.groq.com/keys).
+
+```bash
+git clone https://github.com/NirajBhandarwar1/PostPilot.git && cd PostPilot
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e .
+cp .env.example .env               # Windows: copy .env.example .env  -- then fill in .env
+cp voice.example.md voice.md       # fill in your profile; without it drafts sound generic
+python -m postpilot status         # checks your keys, Gmail and profile
+python -m postpilot test-email
+python -m postpilot scout          # first batch, right now
+python -m postpilot run            # keep running (Windows: start.bat)
 ```
 
-Fill in `D:\Trading\plan\linkedin\voice.md` too. Without it the drafts sound generic.
+Keep `run` alive with `tmux`, a systemd user service or launchd on macOS/Linux, or Task Scheduler
+(`start.bat`) on Windows. A `Dockerfile` is included for running it as a container
+(`docker build -t postpilot . && docker run --env-file .env -v postpilot-data:/app/data -v postpilot-out:/app/output postpilot`);
+the image build has not been tested yet.
+
+Posts are written for the person described in `voice.md` and the `PERSONA_*` lines in `.env`.
 
 ## Commands
 
@@ -92,6 +106,16 @@ Every idea is checked before you see it (`postpilot/factgate.py`):
 
 Design and review decisions: `docs/designs/postpilot-content-engine.md`.
 
+## Development
+
+```
+pip install -e ".[dev]"
+ruff check . && mypy postpilot && pytest --cov
+```
+
+CI runs the same checks on Linux and Windows, Python 3.12 and 3.13. See [CONTRIBUTING.md](CONTRIBUTING.md)
+and [SECURITY.md](SECURITY.md); design decisions are in [docs/adr/](docs/adr/).
+
 ## Files
 
 ```
@@ -113,18 +137,39 @@ data/                   SQLite history and log (not committed)
 Any OpenAI-compatible endpoint works (`postpilot/llm.py`). Two lists in `.env` decide who answers,
 and the first provider that works wins; if it fails, the next one takes over:
 
-- `WRITER_PROVIDERS` for ideas, build plans and posts. Recommended: `openai,groq,cloudflare`.
+- `WRITER_PROVIDERS` for ideas, build plans and posts. Recommended free setup: `groq,cloudflare`;
+  with OpenAI credit: `openai,groq,cloudflare`.
+- Each task can have its own list: `SCOUT_PROVIDERS`, `IDEAS_PROVIDERS`, `OPTIONS_PROVIDERS`,
+  `BRIEF_PROVIDERS`, `POST_PROVIDERS`. Unset, a task uses `WRITER_PROVIDERS`. An entry can pin a
+  model, e.g. `OPTIONS_PROVIDERS=cloudflare:@cf/nvidia/nemotron-3-120b-a12b,cloudflare,groq`
+  (the options request is too big for Groq's free 8K tokens/min).
 - `LLM_PROVIDERS` for everything else, and for the writer too when `WRITER_PROVIDERS` is not set.
 
 | provider | model | cost | notes |
 | --- | --- | --- | --- |
 | OpenAI (`openai`) | `gpt-6-sol` | paid, capped | first writer; `OPENAI_DAILY_TOKENS` is the daily cap (code default 100000) |
-| Groq (`groq`, `qwen`) | `openai/gpt-oss-120b`, `qwen/qwen3.8-27b` | free tier | fast, strict JSON; ~8K tokens/min, prompts are sized for it |
+| Groq (`groq`) | `openai/gpt-oss-120b` | free tier | fast, strict JSON; ~8K tokens/min, so it cannot take the options request. `qwen` (Qwen3.8 on Groq) is capped at 1K output tokens/min and does not work |
 | OpenRouter | `openai/gpt-oss-120b:free` | free tier | backup; ~50 requests/day on free |
-| Cloudflare | `@cf/openai/gpt-oss-120b` | free tier | optional backup |
+| Cloudflare | `@cf/openai/gpt-oss-120b`, `@cf/nvidia/nemotron-3-120b-a12b` | free tier, 10K neurons/day shared | takes every request size; output allowance is 2.5x because its models think first |
 | Ollama (local) | `qwen3:8b` | free | runs on this laptop, slow, weaker writing |
 | custom | e.g. DeepSeek V4.1 Flash, Kimi K3 | cents/cycle | any paid or rented host |
 
 Cost: a scout is about 12K tokens, and each build plan a few times that, so the default cap
 covers several batches a day. Past the cap the free backups write and the email says so.
 `python -m postpilot doctor` tests that each backup really answers. Every setting is in `.env.example`.
+
+## Disclaimer
+
+PostPilot is an independent project, not affiliated with or endorsed by LinkedIn, Google, OpenAI,
+Groq, Cloudflare or any other service it talks to. It drafts text and emails it to you; it never
+posts anywhere. You are responsible for what you publish and for following the terms of every
+service you connect. Model output can be wrong: check the facts and results before you post.
+
+## Credits
+
+The human-writing checks in `postpilot/vendor/` come from the MIT-licensed
+[linkedin-agent-skill](postpilot/vendor/LICENSE-linkedin-agent-skill) by Jake Schincariol.
+
+## License
+
+[MIT](LICENSE)
