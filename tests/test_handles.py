@@ -2,7 +2,8 @@
 
 import json
 
-from postpilot import factgate as fg, pipeline
+from postpilot import factgate as fg
+from postpilot import pipeline
 
 NOW = 1_800_000_000
 OR_MODELS = json.dumps({"data": [

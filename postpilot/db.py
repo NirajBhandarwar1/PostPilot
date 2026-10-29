@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .config import settings
 
@@ -107,11 +107,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ROLLBACK")
         raise
     finally:
-        conn.isolation_level = ""
+        conn.isolation_level = ""  # type: ignore[assignment]  # "" is the runtime default; stubs omit it
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def connect() -> sqlite3.Connection:
@@ -162,7 +162,7 @@ def claim(key: str) -> str:
         value = row["value"] if row else ""
         if value and not value.startswith("busy:"):
             state = "done"
-        elif value and (datetime.now(timezone.utc) - datetime.fromisoformat(value[5:])).total_seconds() < CLAIM_STALE_S:
+        elif value and (datetime.now(UTC) - datetime.fromisoformat(value[5:])).total_seconds() < CLAIM_STALE_S:
             state = "busy"
         else:
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, "busy:" + now_iso()))
@@ -189,6 +189,7 @@ def add_batch(ideas: dict, status: str) -> int:
     with connect() as c:
         cur = c.execute("INSERT INTO batches(created_at,status,ideas_json) VALUES(?,?,?)",
                         (now_iso(), status, json.dumps(ideas)))
+        assert cur.lastrowid is not None  # just inserted
         return cur.lastrowid
 
 

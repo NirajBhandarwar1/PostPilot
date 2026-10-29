@@ -1,11 +1,11 @@
 """Gate outcomes with a fake writer (no model calls): send, regenerate, short batch, nothing.
 Also regression contract D11 (2): ideas keep their topic, heat and links after the gate."""
 
-import types
 
 import pytest
 
-from postpilot import brain, factgate as fg, pipeline
+from postpilot import brain, pipeline
+from postpilot import factgate as fg
 
 CAT = fg.Catalog([fg.Model("groq", "openai/gpt-oss-120b"), fg.Model("groq", "qwen/qwen3.8-27b"),
                   fg.Model("cloudflare", "@cf/moonshotai/kimi-k2.6")])

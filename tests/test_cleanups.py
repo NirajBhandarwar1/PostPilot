@@ -1,6 +1,7 @@
 """Email cleanups: model mentions by id, rounded numbers, no hyphen breaks."""
 
-from postpilot import factgate as fg, pipeline, render
+from postpilot import factgate as fg
+from postpilot import render
 
 
 def test_model_mention_covered_by_provider_id():

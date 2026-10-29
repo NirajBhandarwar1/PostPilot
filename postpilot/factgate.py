@@ -20,6 +20,7 @@ import re
 import time
 import urllib.error
 import urllib.parse
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 
 from . import db, sources
@@ -198,11 +199,13 @@ def fetch_openrouter(fetch, include_paid: bool = True, now: float | None = None)
         if not include_paid or not (mid in frontier or new):
             continue
         pr = m.get("pricing") or {}
+        pin: float | None
+        pout: float | None
         try:
             pin, pout = float(pr.get("prompt", 0)) * 1e6, float(pr.get("completion", 0)) * 1e6
         except (TypeError, ValueError):
             pin = pout = None
-        if pin is not None and (pin < 0 or pout < 0):
+        if pin is not None and pout is not None and (pin < 0 or pout < 0):
             continue                     # routers with "variable" pricing: not a model you can test
         out.append(Model("openrouter", mid, vision, paid=True, price_in=pin, price_out=pout, new=new))
     return out
@@ -335,7 +338,7 @@ def github_repo(repo: str, fetch=None) -> dict | None:
             "language": d.get("language"), "description": (d.get("description") or "")[:200]}
 
 
-def hf_model(repo: str, fetch=None, use_cache=True) -> dict | None | str:
+def hf_model(repo: str, fetch=None, use_cache=True) -> dict | str | None:
     """HF metadata dict, None if the repo does not exist (401/404), 'unknown' on network error."""
     fetch = fetch or sources._get
     cache = json.loads(db.get_meta("hf_cache", "{}") or "{}") if use_cache else {}
@@ -360,7 +363,7 @@ def hf_model(repo: str, fetch=None, use_cache=True) -> dict | None | str:
 
 # ---------- scans ----------
 
-def families(cat: Catalog, extra_names: list[str] = ()) -> list[str]:
+def families(cat: Catalog, extra_names: Sequence[str] = ()) -> list[str]:
     fams = set(BASE_FAMILIES)
     for m in cat.models:
         f = family_of(m.norm)
@@ -521,7 +524,7 @@ class Verdict:
 
 
 def check_idea(idea: dict, topic: dict, signals: list[dict], cat: Catalog,
-               hf_names: list[str] = (), hf_lookup=None) -> Verdict:
+               hf_names: Sequence[str] = (), hf_lookup=None) -> Verdict:
     v = Verdict(True)
     by_key = cat.by_key()
     lane = (idea.get("format") or "").lower()
@@ -611,7 +614,7 @@ RISKY_CALLS = [
 ]
 
 
-def scan_code(files: list[tuple[str, str]], extra_hosts: set[str] = frozenset()) -> list[str]:
+def scan_code(files: list[tuple[str, str]], extra_hosts: Collection[str] = frozenset()) -> list[str]:
     """'Check before you run' lines for model-written files: package installs or imports outside
     a small allowlist, shell commands, eval/exec, deletes, and network calls to unknown hosts.
     Never blocks; the person reads the list before running anything."""
@@ -628,9 +631,9 @@ def scan_code(files: list[tuple[str, str]], extra_hosts: set[str] = frozenset())
                     name = re.split(r"[<>=\[]", pkg.lower())[0].strip()
                     if name and not name.startswith("-") and name not in ALLOWED_PACKAGES:
                         out.append(f"{where}: installs package '{name}': check it is real and wanted")
-            m = re.match(r"\s*(?:from\s+([A-Za-z_][\w]*)|import\s+([A-Za-z_][\w]*))", line)
-            if m and path.endswith(".py"):
-                mod = (m.group(1) or m.group(2)).lower()
+            im = re.match(r"\s*(?:from\s+([A-Za-z_][\w]*)|import\s+([A-Za-z_][\w]*))", line)
+            if im and path.endswith(".py"):
+                mod = (im.group(1) or im.group(2)).lower()
                 if mod not in STDLIB and mod not in ALLOWED_PACKAGES and mod != "__future__":
                     out.append(f"{where}: imports '{mod}': check the package is real before installing")
             for rx, why in RISKY_CALLS:
@@ -643,7 +646,7 @@ def scan_code(files: list[tuple[str, str]], extra_hosts: set[str] = frozenset())
 
 
 def scan_text(texts: list[str], topic: dict, signals: list[dict], cat: Catalog,
-              runs: list[str], hf_names: list[str] = ()) -> list[str]:
+              runs: list[str], hf_names: Sequence[str] = ()) -> list[str]:
     """D12: the same scans on a finished post and its steps. Returns 'Check before you post' lines."""
     titles = _evidence(topic, signals)
     texts = [plain(t) for t in texts]
@@ -667,7 +670,7 @@ def filter_links(topic: dict, signals: list[dict]) -> list[int]:
     toks = entity_tokens(topic.get("entities", []) or [topic.get("name", "")])
     handle = (topic.get("handle") or "").lower().strip()
     if "/" in handle:                    # a repo "owner/name" names the story even if "name" is short
-        toks = [*toks, re.sub(r"^https?://github\.com/", "", handle).strip("/")]
+        toks = {*toks, re.sub(r"^https?://github\.com/", "", handle).strip("/")}
     keep = []
     for i in topic.get("signal_ids", []):
         if not 0 <= i < len(signals):

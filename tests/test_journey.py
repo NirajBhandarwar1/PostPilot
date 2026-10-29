@@ -7,7 +7,7 @@ import types
 
 import pytest
 
-from postpilot import brain, mailer, pipeline
+from postpilot import brain, pipeline
 from tests.test_options import fake_brief, option
 from tests.test_pipeline_gate import CAT, SIGNALS, TOPICS, make_idea
 

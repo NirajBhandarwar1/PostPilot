@@ -2,6 +2,7 @@
 and a broken page yields 0 signals without crashing the run."""
 
 import json
+from datetime import UTC
 
 import pytest
 
@@ -58,9 +59,9 @@ HF_JSON = json.dumps([
 
 @pytest.fixture
 def now_rfc822():
+    from datetime import datetime
     from email.utils import format_datetime
-    from datetime import datetime, timezone
-    return format_datetime(datetime.now(timezone.utc))
+    return format_datetime(datetime.now(UTC))
 
 
 @pytest.fixture

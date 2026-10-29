@@ -30,7 +30,7 @@ from .config import settings
 
 
 def _setup_logging() -> None:
-    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]  # TextIO stub lacks reconfigure
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -41,11 +41,12 @@ def _setup_logging() -> None:
 
 
 def status() -> None:
-    ok = lambda b: "OK" if b else "MISSING"
+    def ok(b):
+        return "OK" if b else "MISSING"
     plist = llm.providers()
     writers = llm.providers("writer")
     print(f"Model          : {ok(bool(plist))}  " + (" -> ".join(f"{p.name}:{p.model}" for p in plist) or "set GROQ_API_KEY or OLLAMA_MODEL in .env"))
-    print(f"Writer         : " + (" -> ".join(f"{p.name}:{p.model}" for p in writers) or "same as Model"))
+    print("Writer         : " + (" -> ".join(f"{p.name}:{p.model}" for p in writers) or "same as Model"))
     print(f"Paid tokens    : {llm.paid_tokens_today():,} used today of {llm.daily_cap():,} (OPENAI_DAILY_TOKENS)")
     print(f"Gmail          : {ok(settings.has_email)}  ({settings.gmail_address or 'not set'})")
     print(f"Voice profile  : {ok(bool(pipeline._voice()))}  ({settings.voice_file})")

@@ -5,6 +5,8 @@ import email
 import json
 import sqlite3
 import types
+from datetime import UTC
+from pathlib import Path
 
 import pytest
 
@@ -122,7 +124,7 @@ def test_after_you_post_commands_carry_batch_and_build():
 
 
 def test_prompt_no_longer_asks_for_readme_install_lines():
-    src = open(brain.__file__, encoding="utf-8").read()
+    src = Path(brain.__file__).read_text(encoding="utf-8")
     assert "official install command" not in src and "exact commands from its README" not in src
 
 
@@ -226,7 +228,7 @@ def test_scout_style_status_never_revives_a_skipped_batch():
 
 
 def test_a_reply_is_handled_once_even_if_marking_read_fails(env, monkeypatch):
-    bid, calls = env
+    bid, _calls = env
     handled = []
     monkeypatch.setattr(pipeline, "settings", types.SimpleNamespace(**{**vars(pipeline.settings), "has_email": True}))
     monkeypatch.setattr(pipeline, "handle_reply", lambda *a, **k: handled.append(a))
@@ -242,7 +244,7 @@ def test_a_reply_is_handled_once_even_if_marking_read_fails(env, monkeypatch):
 
 
 def test_a_reply_another_run_is_handling_is_left_alone(env, monkeypatch):
-    bid, calls = env
+    bid, _calls = env
     handled, marked = [], []
     monkeypatch.setattr(pipeline, "settings", types.SimpleNamespace(**{**vars(pipeline.settings), "has_email": True}))
     monkeypatch.setattr(pipeline, "handle_reply", lambda *a, **k: handled.append(a))
@@ -254,8 +256,8 @@ def test_a_reply_another_run_is_handling_is_left_alone(env, monkeypatch):
 
 
 def test_a_claim_from_a_run_that_died_is_taken_over_after_twenty_minutes():
-    from datetime import datetime, timedelta, timezone
-    ago = lambda m: "busy:" + (datetime.now(timezone.utc) - timedelta(minutes=m)).isoformat()   # noqa: E731
+    from datetime import datetime, timedelta
+    ago = lambda m: "busy:" + (datetime.now(UTC) - timedelta(minutes=m)).isoformat()   # noqa: E731
     db.set_meta("reply:u3", ago(5))
     assert db.claim("reply:u3") == "busy"                  # a build is probably still running
     db.set_meta("reply:u3", ago(30))
@@ -299,7 +301,7 @@ def test_one_failing_reply_does_not_block_the_next(env, monkeypatch):
 
 
 def test_a_failure_that_cannot_be_reported_is_retried_not_lost(env, monkeypatch):
-    bid, calls = env
+    bid, _calls = env
     monkeypatch.setattr(pipeline, "settings", types.SimpleNamespace(**{**vars(pipeline.settings), "has_email": True}))
     marked, mails = [], []
 
@@ -544,6 +546,20 @@ def test_no_credit_is_not_retried(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: calls.append(1) or (_ for _ in ()).throw(
         _http_429(NO_CREDIT_BODY)))
     p = llm.Provider("openai", "https://x", "m", "k", True, {}, paid=True)
+    with pytest.raises(llm.NoCredit):
+        llm._post(p, {})
+    assert len(calls) == 1 and sleeps == []
+
+
+def test_cloudflare_daily_allocation_used_up_is_not_retried(monkeypatch):
+    import urllib.request
+    calls, sleeps = [], []
+    body = ('{"errors":[{"message":"AiError: you have used up your daily free allocation of 10,000 '
+            'neurons, please upgrade to the Workers Paid plan","code":3036}]}')
+    monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: calls.append(1) or (_ for _ in ()).throw(
+        _http_429(body)))
+    p = llm.Provider("cloudflare", "https://x", "m", "k", True, {})
     with pytest.raises(llm.NoCredit):
         llm._post(p, {})
     assert len(calls) == 1 and sleeps == []

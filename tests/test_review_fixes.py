@@ -5,12 +5,12 @@ O4 history, O5 reply check, O2 outcomes, plus the outside-voice corrections (#1,
 import email
 import json
 import types
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from postpilot import brain, db, factgate as fg, llm, mailer, pipeline
-
+from postpilot import brain, db, llm, mailer, pipeline
+from postpilot import factgate as fg
 
 # ---------- R1: untrusted data is marked; generated code is scanned ----------
 
@@ -147,11 +147,11 @@ def test_failed_scout_retries_in_an_hour(monkeypatch):
     with pytest.raises(Stop):
         pipeline.run_forever()
     retry = datetime.fromisoformat(db.get_meta("retry_scout_at"))
-    left = (retry - datetime.now(timezone.utc)).total_seconds()
+    left = (retry - datetime.now(UTC)).total_seconds()
     assert 3000 < left <= 3600
     assert db.get_meta("last_scout_at") is None              # the scout clock was not restarted
     assert pipeline.scout_due() is False
-    db.set_meta("retry_scout_at", (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat())
+    db.set_meta("retry_scout_at", (datetime.now(UTC) - timedelta(seconds=1)).isoformat())
     assert pipeline.scout_due() is True
 
 
@@ -203,7 +203,7 @@ def test_model_opinion_is_capped():
 def _batch(status, topic, heat, built_days_ago=None):
     bid = db.add_batch({"ideas": [{"title": topic, "topic": topic, "heat": heat}]}, status=status)
     if built_days_ago is not None:
-        when = (datetime.now(timezone.utc) - timedelta(days=built_days_ago)).isoformat(timespec="seconds")
+        when = (datetime.now(UTC) - timedelta(days=built_days_ago)).isoformat(timespec="seconds")
         db.update_batch(bid, chosen=1, built_at=when)
     return bid
 
@@ -227,7 +227,7 @@ def test_story_returns_when_twice_as_hot():
 # ---------- O5: replies must pass Gmail's sender check; #12 ratings per idea shown ----------
 
 def _msg(auth):
-    m = email.message_from_string(f"From: niraj@gmail.com\nSubject: Re: [PostPilot #3] x\n"
+    m = email.message_from_string("From: niraj@gmail.com\nSubject: Re: [PostPilot #3] x\n"
                                   + (f"Authentication-Results: {auth}\n" if auth else "") + "\n2")
     return m
 

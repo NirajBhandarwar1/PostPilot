@@ -17,13 +17,22 @@ import logging
 import math
 import re
 import time
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from . import brain, db, factgate, llm, mailer, sources
-from .render import (CURSOR_PROMPT, slug as _slug, brief_warnings, markdown_email, render_brief,
-                     render_ideas, render_options, render_options_full, text_email)
 from .config import ROOT, settings
+from .render import (
+    CURSOR_PROMPT,
+    brief_warnings,
+    markdown_email,
+    render_brief,
+    render_ideas,
+    render_options,
+    render_options_full,
+    text_email,
+)
+from .render import slug as _slug
 from .vendor import detect as detector
 from .vendor import humanize as humanizer
 
@@ -39,7 +48,7 @@ def _voice() -> str:
         return ""
     # An untouched template has empty answers; treat it as missing.
     # Answers in (brackets) are the template's hints, not real answers.
-    filled = [l for l in text.splitlines() if re.match(r"^- \*\*.+:\*\*\s*[^\s(]", l)]
+    filled = [ln for ln in text.splitlines() if re.match(r"^- \*\*.+:\*\*\s*[^\s(]", ln)]
     return text if filled else ""
 
 
@@ -61,7 +70,7 @@ def _history() -> list[dict]:
     """Stories you actually built or posted in the last 14 days, with their heat at the time.
     Every build counts, even several from one batch (eng review O4, D5)."""
     out = []
-    cutoff = datetime.now(timezone.utc).timestamp() - HISTORY_DAYS * 86400
+    cutoff = datetime.now(UTC).timestamp() - HISTORY_DAYS * 86400
     for b in db.recent_batches(50):
         ideas = json.loads(b["ideas_json"]).get("ideas", [])
         for rec in _builds(b):
@@ -128,11 +137,11 @@ def _heat(topic: dict, signals: list[dict], ids: list[int] | None = None) -> tup
     `ids` should be the sources that really name the story (link_ids)."""
     ids = topic["signal_ids"] if ids is None else ids
     hits = [signals[i] for i in ids if 0 <= i < len(signals)]
-    kinds = {}
+    kinds: dict[str, list[dict]] = {}
     for h in hits:
         kinds.setdefault(h["kind"], []).append(h)
     # Real attention beats article counts: upvotes, curated front pages, trending ranks.
-    score = 3 * len(kinds)                                   # seen in many places = viral
+    score = 3.0 * len(kinds)                                   # seen in many places = viral
     news_pts = 0.0
     for h in hits:
         kind, rank, eng = h["kind"], h["rank"], h.get("engagement", 0) or 0
@@ -180,7 +189,7 @@ def _finish(idea: dict, n: int, t: dict, signals: list[dict], verdict, cat) -> N
     })
 
 
-def generate_batch(signals: list[dict], history: list[str], voice: str, cat: factgate.Catalog,
+def generate_batch(signals: list[dict], history: list, voice: str, cat: factgate.Catalog,
                    hf_lookup=None, gh_lookup=None) -> dict | None:
     """Find hot topics, write one idea per topic, fact-check each idea, regenerate a failing
     idea once, drop it if it still fails. Returns the batch dict, or None if no idea passed."""
@@ -200,7 +209,8 @@ def generate_batch(signals: list[dict], history: list[str], voice: str, cat: fac
         log.info("topic %-55s heat %4.0f buzz %2d links %d  %s", t["name"][:55], t["heat"],
                  t["buzz"], len(t["link_ids"]), t["heat_where"][:60])
 
-    fresh, used_ids = [], set()
+    fresh: list[dict] = []
+    used_ids: set[int] = set()
     for t in topics:  # hottest first; drop repeats of earlier posts, stories already picked,
         ids = set(t["signal_ids"])            # and stories with no source that names them
         dup = ids and len(ids & used_ids) > len(ids) / 2
@@ -241,6 +251,7 @@ def generate_batch(signals: list[dict], history: list[str], voice: str, cat: fac
             stats["dropped"] += 1
             log.warning("dropped idea for %r: %s", t["name"], "; ".join(verdict.reasons))
             continue
+        assert idea is not None   # a missing idea gave Verdict(False) above and was dropped
         _finish(idea, n, t, signals, verdict, cat)
         stats["unverified"] += len(verdict.unverified)
         kept.append(idea)
@@ -259,6 +270,7 @@ def generate_batch(signals: list[dict], history: list[str], voice: str, cat: fac
             stats["dropped"] += 1
             log.warning("dropped backfill idea for %r: %s", t["name"], "; ".join(verdict.reasons))
             continue
+        assert idea is not None   # a missing idea gave Verdict(False) above and was dropped
         _finish(idea, n, t, signals, verdict, cat)
         stats["unverified"] += len(verdict.unverified)
         kept.append(idea)
@@ -282,7 +294,7 @@ def generate_batch(signals: list[dict], history: list[str], voice: str, cat: fac
     }
 
 
-def save_run(signals: list[dict], history: list[str], cat: factgate.Catalog) -> Path:
+def save_run(signals: list[dict], history: list, cat: factgate.Catalog) -> Path:
     """Snapshot what this run saw, so `postpilot eval` can replay it later (D10)."""
     runs = settings.data_dir / "runs"
     runs.mkdir(parents=True, exist_ok=True)
@@ -647,7 +659,7 @@ def _make_options(idea: dict) -> tuple[dict, list[str]]:
     No saving, no email: propose() and the eval both use this. Returns (result, dropped)."""
     llm.reset_usage()
     cat = factgate.load_catalogs()
-    keys = [m.key for m in factgate.shortlist(cat, idea.get("entities", []) + [idea.get("handle", "")])]
+    keys = [m.key for m in factgate.shortlist(cat, [*idea.get("entities", []), idea.get("handle", "")])]
     notes = _model_notes(cat, keys)
 
     found = sources.research(idea)
@@ -657,9 +669,11 @@ def _make_options(idea: dict) -> tuple[dict, list[str]]:
                    + found["docs"][:2500])
     known = [t.lower() for t in sources.research_titles(found)]
 
-    kept, raw, dropped = [], {}, []
+    kept: list[dict] = []
+    raw: dict = {}
+    dropped: list = []
     extra = ""
-    for attempt in range(2):     # one retry if too few options pass, or no "look what I built" demo
+    for _attempt in range(2):     # one retry if too few options pass, or no "look what I built" demo
         raw = brain.make_options(idea, _voice(), keys, notes, research_text=digest, extra=extra).model_dump()
         kept, dropped = [], []
         for pos, o in enumerate(raw["options"], 1):
@@ -699,7 +713,8 @@ def _make_options(idea: dict) -> tuple[dict, list[str]]:
 
 def _overlap(a: str, b: str) -> bool:
     """Does text a quote source b? (3+ shared distinctive words)"""
-    words = lambda s: {w for w in re.findall(r"[a-z0-9]{3,}", s)} - {"the", "and", "for", "with", "views", "stars"}
+    def words(s):
+        return set(re.findall(r"[a-z0-9]{3,}", s)) - {"the", "and", "for", "with", "views", "stars"}
     return len(words(a) & words(b)) >= 3
 
 
@@ -712,11 +727,11 @@ RETRY_AFTER_FAILURE_S = 3600
 def scout_due() -> bool:
     retry = db.get_meta("retry_scout_at")
     if retry:
-        return datetime.now(timezone.utc) >= datetime.fromisoformat(retry)
+        return datetime.now(UTC) >= datetime.fromisoformat(retry)
     last = db.get_meta("last_scout_at")
     if not last:
         return True
-    age = datetime.now(timezone.utc) - datetime.fromisoformat(last)
+    age = datetime.now(UTC) - datetime.fromisoformat(last)
     return age.total_seconds() >= settings.cycle_days * 86400
 
 
@@ -816,7 +831,7 @@ def run_forever() -> None:
                 scout()
                 db.set_meta("retry_scout_at", "")
         except Exception:
-            retry_at = datetime.fromtimestamp(time.time() + RETRY_AFTER_FAILURE_S, timezone.utc)
+            retry_at = datetime.fromtimestamp(time.time() + RETRY_AFTER_FAILURE_S, UTC)
             log.exception("scout failed; retrying at %s", retry_at.isoformat(timespec="minutes"))
             db.set_meta("retry_scout_at", retry_at.isoformat(timespec="seconds"))
         try:
@@ -841,7 +856,7 @@ def replay(n: int = 3) -> dict:
         return {}
     llm.reset_usage()
     keys = ("pitched", "failed_first", "regenerated", "dropped", "unverified")
-    total = {"runs": 0, **{k: 0 for k in keys}}
+    total: dict[str, float] = {"runs": 0, **dict.fromkeys(keys, 0)}
     print(f"{'run':24} {'pitched':>7} {'failed':>6} {'regen':>5} {'dropped':>7} {'unverif':>7}")
     for path in runs:
         snap = json.loads(path.read_text(encoding="utf-8"))
@@ -851,7 +866,7 @@ def replay(n: int = 3) -> dict:
         except Exception as e:
             print(f"{path.stem:24} ERROR {e}")
             continue
-        st = (batch or {}).get("stats") or {k: 0 for k in keys}
+        st = (batch or {}).get("stats") or dict.fromkeys(keys, 0)
         print(f"{path.stem:24} {st['pitched']:>7} {st['failed_first']:>6} {st['regenerated']:>5} "
               f"{st['dropped']:>7} {st['unverified']:>7}")
         total["runs"] += 1
@@ -982,7 +997,7 @@ def report() -> dict:
     if not posted:
         print("No posts logged yet. After posting: python -m postpilot posted <batch> <linkedin-url>")
         return {}
-    by = {"built": {}, "topic kind": {}}
+    by: dict[str, dict[str, dict[str, int]]] = {"built": {}, "topic kind": {}}
     total_in = 0
     print(f"{'post':>8}  {'inbound':>7}  {'recr':>4} {'fndr':>4} {'othr':>4}  built / topic")
     for r in posted:

@@ -82,7 +82,7 @@ def render_ideas(batch_id: int, batch: dict) -> str:
     out += ["-" * 60, f"Why I pick #{batch['recommended']}: {batch['recommended_reason']}",
             "", "Optional: rate the ideas 1-5 to teach me your taste, e.g. '2 rate 4 5 2'."]
     writers = batch.get("writers") or []
-    primary = (llm.providers("writer") or [None])[0]
+    primary = next(iter(llm.providers("writer")), None)
     if writers and primary and not any(w.startswith(primary.name + ":") for w in writers):
         out.append(f"Note: {primary.name} did not answer (outage, no credit or daily cap), so a backup model "
                    f"({', '.join(writers)}) wrote this batch. Expect weaker ideas.")
@@ -248,7 +248,7 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
          "4. Never paste keys into the chat; put them in `.env` when asked.",
          "5. When everything works, do Part B yourself.", ""]
     writers = sorted(llm.USAGE)
-    primary = (llm.providers("writer") or [None])[0]
+    primary = next(iter(llm.providers("writer")), None)
     if writers and primary and not any(w.startswith(primary.name + ":") for w in writers):
         warnings = [*warnings, f"written by a backup model ({', '.join(writers)}) because {primary.name} "
                     "was unavailable or over today's cap: expect a weaker plan; consider rebuilding tomorrow"]
@@ -263,7 +263,7 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
           "## Goal", g(brief.goal), "", f"Repo name: `{repo}`", "",
           "## Before you start (🧑 you, once)",
           *before,
-          *([f"- [ ] Get keys for `.env`: " + "; ".join(f"{v[1]} from {v[2]}" for v in PROVIDER_API.values()
+          *(["- [ ] Get keys for `.env`: " + "; ".join(f"{v[1]} from {v[2]}" for v in PROVIDER_API.values()
                                                          if v[1] in env)] if env else []),
           *(["- [ ] Run third-party code in a sandbox, not directly on this laptop: Windows Sandbox (Windows "
               "Pro: Turn Windows features on or off > Windows Sandbox) or a dev container. Your `.env` keys "
@@ -438,7 +438,7 @@ def render_options(batch_id: int, choice: int, idea: dict, res: dict) -> str:
            "Or 'skip'.", ""]
     intro = res.get("story_intro") or idea.get("the_news") or ""
     if intro:
-        out += ["THE STORY", *[ln for ln in textwrap.wrap(intro, 88)], ""]
+        out += ["THE STORY", *list(textwrap.wrap(intro, 88)), ""]
     viral = _viral_line(res.get("research") or {})
     if viral:
         out += [*textwrap.wrap("Already viral: " + viral, 88), ""]

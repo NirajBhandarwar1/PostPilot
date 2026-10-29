@@ -16,10 +16,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
+from functools import partial
 
-from .config import env, settings
+from .config import env
 
 log = logging.getLogger("postpilot.sources")
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) postpilot/0.3"
@@ -51,7 +53,7 @@ def _public_url(url: str) -> bool:
         addrs = {ai[4][0] for ai in socket.getaddrinfo(host, None)}
     except OSError:
         return True                                   # can't resolve: the fetch itself will fail
-    return all(ipaddress.ip_address(a.split("%")[0]).is_global for a in addrs)
+    return all(ipaddress.ip_address(str(a).split("%")[0]).is_global for a in addrs)
 
 
 class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
@@ -89,7 +91,7 @@ def hf_trending_models() -> list[dict]:
 
 def github_trending() -> list[dict]:
     page = _get("https://github.com/trending?since=weekly").decode("utf-8", "replace")
-    out = []
+    out: list[dict] = []
     for block in page.split('class="Box-row"')[1:]:
         m = re.search(r'return_to=%2F([^%"]+)%2F([^"&]+)"', block)
         if not m:
@@ -105,7 +107,7 @@ def github_trending() -> list[dict]:
 
 
 def reddit() -> list[dict]:
-    out = []
+    out: list[dict] = []
     for sub in ["singularity", "OpenAI", "artificial", "LocalLLaMA"]:
         root = None
         for attempt in range(2):
@@ -118,9 +120,9 @@ def reddit() -> list[dict]:
         if root is None:
             continue
         ns = "{http://www.w3.org/2005/Atom}"
-        for i, e in enumerate(root.findall(f"{ns}entry")[:6]):
-            link = e.find(f"{ns}link")
-            out.append(_sig("Reddit", i, f"r/{sub}: {e.findtext(f'{ns}title') or ''}",
+        for i, entry in enumerate(root.findall(f"{ns}entry")[:6]):
+            link = entry.find(f"{ns}link")
+            out.append(_sig("Reddit", i, f"r/{sub}: {entry.findtext(f'{ns}title') or ''}",
                             link.get("href") if link is not None else "", 0, f"r/{sub} top of week #{i + 1}"))
         time.sleep(7)  # Reddit throttles fast requests
     return out
@@ -153,8 +155,8 @@ def hacker_news() -> list[dict]:
 
 def techmeme() -> list[dict]:
     """Techmeme's curated river: the stories the tech industry itself treats as top news."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=min(RADAR_DAYS, 7))
-    out = []
+    cutoff = datetime.now(UTC) - timedelta(days=min(RADAR_DAYS, 7))
+    out: list[dict] = []
     for title, link, when in _feed_items(_get("https://www.techmeme.com/feed.xml")):
         if when >= cutoff and AI_WORDS.search(title):
             out.append(_sig("Techmeme", len(out), re.sub(r"\s*\([^)]*\)\s*$", "", title), link, 0,
@@ -196,8 +198,9 @@ def _feed_items(raw: bytes):
 
 
 def news() -> list[dict]:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=min(RADAR_DAYS, 7))
-    out, seen = [], set()
+    cutoff = datetime.now(UTC) - timedelta(days=min(RADAR_DAYS, 7))
+    out: list[dict] = []
+    seen: set[str] = set()
     for q in NEWS_QUERIES:
         url = ("https://news.google.com/rss/search?q=" + urllib.parse.quote(f"{q} when:7d")
                + "&hl=en-US&gl=US&ceid=US:en")
@@ -273,7 +276,7 @@ def youtube_search(query: str, fetch=None, limit: int = 8) -> list[dict]:
     m = re.search(r"var ytInitialData = (\{.*?\});</script>", html, re.S)
     if not m:
         return []
-    out = []
+    out: list[dict] = []
 
     def walk(node):
         if isinstance(node, dict):
@@ -385,7 +388,7 @@ def docs_for(idea: dict, fetch=None) -> tuple[str, str]:
     model's Hugging Face card, or the official page among the story's sources."""
     kind, handle = idea.get("handle_type", ""), (idea.get("handle") or "").strip()
     urls = idea.get("source_urls", [])
-    tries = []
+    tries: list[tuple[str, Callable[[], str]]] = []
     if kind == "github_repo" or (re.fullmatch(r"[\w.-]+/[\w.-]+", handle) and kind != "model"):
         tries.append((f"README of github.com/{handle}", lambda: readme(handle, fetch)))
     if kind == "model":
@@ -393,13 +396,13 @@ def docs_for(idea: dict, fetch=None) -> tuple[str, str]:
         if re.fullmatch(r"[\w.-]+/[\w.-]+", handle):
             hf.insert(0, handle)
         for repo in hf[:2]:
-            tries.append((f"Hugging Face model card {repo}", lambda r=repo: model_card(r, fetch)))
+            tries.append((f"Hugging Face model card {repo}", partial(model_card, repo, fetch)))
     for u in [u for u in urls if not NOT_OFFICIAL.search(u)][:2]:
         if "github.com/" in u and kind != "github_repo":
             repo = "/".join(u.split("github.com/")[1].split("/")[:2])
-            tries.append((f"README of github.com/{repo}", lambda r=repo: readme(r, fetch)))
+            tries.append((f"README of github.com/{repo}", partial(readme, repo, fetch)))
         elif "huggingface.co/" not in u:
-            tries.append((f"official page {u}", lambda u=u: page_text(u, fetch)))
+            tries.append((f"official page {u}", partial(page_text, u, fetch)))
     for label, job in tries:
         try:
             text = job()
@@ -418,7 +421,8 @@ def clean_markdown(raw: str, limit: int = 5000) -> str:
     text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)              # images / badges
     text = re.sub(r"\[!\[.*?\]\(.*?\)\]\(.*?\)", "", text)
     lines = [ln.rstrip() for ln in text.splitlines()]
-    sections, cur = [], ["", []]
+    sections: list[list] = []
+    cur: list = ["", []]
     for ln in lines:
         if re.match(r"^#{1,4}\s", ln):
             sections.append(cur)

@@ -8,7 +8,6 @@ import pytest
 
 from postpilot import factgate as fg
 
-
 # ---------- fixtures ----------
 
 GROQ = {"data": [{"id": "openai/gpt-oss-120b"}, {"id": "qwen/qwen3.8-27b"}, {"id": "whisper-large-v3"},
@@ -283,8 +282,8 @@ def test_missing_hf_repo_is_flagged(catalog):
 def test_scan_text_flags_post_claims(catalog):
     lines = fg.scan_text(["Kimi K2.6 beat Qwen3.8. Google raised $9B for Gemini 4 Argon."], TOPIC, SIGNALS,
                          catalog, ["cloudflare:@cf/moonshotai/kimi-k2.6", "groq:qwen/qwen3.8-27b"])
-    assert any("Unverified claim in the post" in l for l in lines)
-    assert not any("Kimi" in l for l in lines)
+    assert any("Unverified claim in the post" in ln for ln in lines)
+    assert not any("Kimi" in ln for ln in lines)
 
 
 def test_shortlist_keeps_groq_and_caps_others(catalog):

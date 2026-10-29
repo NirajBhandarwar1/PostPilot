@@ -6,7 +6,8 @@ import types
 
 import pytest
 
-from postpilot import brain, db, factgate as fg, mailer, pipeline
+from postpilot import brain, db, mailer, pipeline
+from postpilot import factgate as fg
 
 CAT = fg.Catalog([fg.Model("groq", "openai/gpt-oss-120b"),
                   fg.Model("openai", "gpt-6-sol", paid=True, price_in=2.0, price_out=10.0)])
@@ -57,7 +58,7 @@ def env(monkeypatch, tmp_path):
 
 
 def test_propose_gates_prices_and_saves(env, tmp_path):
-    bid, calls = env
+    bid, _calls = env
     res = pipeline.propose(bid, 3, send_email=False)
     assert [o["title"] for o in res["options"]] == ["Hidden-rule demo", "Public harness", "Agent face-off"]
     assert res["recommended"] == 2                       # recommended option kept its number
@@ -126,7 +127,7 @@ def test_reply_parsing_for_options():
 
 
 def test_pick_reason_uses_shown_numbers(env, monkeypatch):
-    bid, calls = env
+    bid, _calls = env
     res = pipeline.propose(bid, 3, send_email=False)
     assert res["recommended"] == 2
     o = brain.BuildOptions(options=[option("Dropped", kind="face-off", models=["groq:imaginary-9"]),
@@ -138,7 +139,7 @@ def test_pick_reason_uses_shown_numbers(env, monkeypatch):
 
 
 def test_retry_when_no_demo_app(env, monkeypatch):
-    bid, calls = env
+    bid, _calls = env
     seen = []
     no_demo = brain.BuildOptions(options=[option("Eval A", kind="face-off", models=["groq:openai/gpt-oss-120b"]),
                                           option("Eval B", kind="stress-test")], recommended_reason="r", recommended=1)
@@ -156,12 +157,12 @@ def test_retry_when_no_demo_app(env, monkeypatch):
 
 
 def fake_brief(**kw):
-    base = dict(project_name="csv-first-aid", goal="A tiny app.", done_criteria=["app runs"],
-                stack=["Python 3.12: simple"], file_tree=[brain.FileSpec(path="app.py", purpose="the app")],
-                setup_commands=["python -m venv .venv", "pip install requests"],
-                tasks=[brain.BuildTask(title="Step 1: setup", details="Create the project.", done_when="pytest passes")],
-                tests=["test parse"], demo_data="3 sample CSVs", readme_outline=["What it is"],
-                pitfalls=["Windows paths"], demo_script=["Show the app"])
+    base = {"project_name": "csv-first-aid", "goal": "A tiny app.", "done_criteria": ["app runs"],
+                "stack": ["Python 3.12: simple"], "file_tree": [brain.FileSpec(path="app.py", purpose="the app")],
+                "setup_commands": ["python -m venv .venv", "pip install requests"],
+                "tasks": [brain.BuildTask(title="Step 1: setup", details="Create the project.", done_when="pytest passes")],
+                "tests": ["test parse"], "demo_data": "3 sample CSVs", "readme_outline": ["What it is"],
+                "pitfalls": ["Windows paths"], "demo_script": ["Show the app"]}
     base.update(kw)
     return brain.CursorBrief(**base)
 
@@ -204,7 +205,7 @@ def test_post_rewritten_until_it_reads_human(monkeypatch):
         return brain.PostKit(summary="s", steps=[], post_draft=flat if len(calls) == 1 else good,
                              placeholders=[], alt_hooks=[], visual_spec="v", fact_checks=[])
     monkeypatch.setattr(pipeline.brain, "build_post", build_post)
-    kit, clean, report, before, after = pipeline._write_post(
+    _kit, clean, _report, _before, after = pipeline._write_post(
         {"research": {"repos": [{"title": "aicodeking/leanrea: x", "stars": 1545}]}}, plan="p")
     assert len(calls) >= 2 and calls[0] == "" and "REWRITE" in calls[1] and "specificity" in calls[1]
     assert after[1] > 60 and "DeepInfer" in clean                     # the better draft was kept

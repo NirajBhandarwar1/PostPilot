@@ -139,7 +139,7 @@ def test_second_idea_reply_after_a_build_is_not_ignored(env):
 
 
 def test_skip_after_a_build_is_ignored_and_old_batches_still_count(env):
-    bid, calls = env
+    bid, _calls = env
     db.edit_batch(bid, lambda d: d.setdefault("builds", []).append(
         {"idea": 3, "option": 1, "built_at": db.now_iso(), "build_dir": "x"}), status="built")
     pipeline.handle_reply(bid, None, "skip")
@@ -152,7 +152,7 @@ def test_skip_after_a_build_is_ignored_and_old_batches_still_count(env):
 # ---------- T4: saves merge, never overwrite ----------
 
 def test_slow_options_save_keeps_a_build_saved_meanwhile(env, monkeypatch):
-    bid, calls = env
+    bid, _calls = env
     original = pipeline.brain.make_options
 
     def slow_writer(*a, **k):                                     # another save lands mid-generation
@@ -295,6 +295,7 @@ def _http_error(code, message):
 
 def test_request_too_large_moves_on_without_retrying(monkeypatch):
     import urllib.request
+
     from postpilot import llm
     calls, sleeps = [], []
     monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
@@ -311,6 +312,7 @@ def test_request_too_large_moves_on_without_retrying(monkeypatch):
 
 def test_busy_rate_limit_is_still_retried(monkeypatch):
     import urllib.request
+
     from postpilot import llm
     calls = []
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
@@ -342,12 +344,12 @@ def test_probe_reports_unconfigured_and_failures(monkeypatch):
 
 def test_linkedin_x_and_bing_results_are_parsed():
     from postpilot import sources
-    ddg = ('<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.linkedin.com'
-           '%2Fposts%2Fa-1&amp;rut=x">I tested <b>REA</b> on 3 apps &amp; here&#x27;s what broke</a>').encode()
+    ddg = (b'<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.linkedin.com'
+           b'%2Fposts%2Fa-1&amp;rut=x">I tested <b>REA</b> on 3 apps &amp; here&#x27;s what broke</a>')
     got = sources.social_search("rea", "linkedin.com/posts", fetch=lambda u, h=None: ddg)
     assert got == [{"title": "I tested REA on 3 apps & here's what broke",
                     "url": "https://www.linkedin.com/posts/a-1"}]
-    bing = '<h2 class="b"><a href="https://ex.com/a" h="x"><strong>REA</strong> guide &amp; tips</a></h2>'.encode()
+    bing = b'<h2 class="b"><a href="https://ex.com/a" h="x"><strong>REA</strong> guide &amp; tips</a></h2>'
     assert sources.web_search("rea", fetch=lambda u, h=None: bing) == [{"title": "REA guide & tips", "url": ""}]
 
 
@@ -359,7 +361,7 @@ def test_skip_on_an_options_email_changes_nothing(env):
 
 
 def test_a_crash_while_handling_sends_the_failure_email(env, monkeypatch):
-    bid, calls = env
+    bid, _calls = env
     sent = []
     monkeypatch.setattr(pipeline, "settings", types.SimpleNamespace(**{**vars(pipeline.settings), "has_email": True}))
     monkeypatch.setattr(pipeline.mailer, "send", lambda subj, body, html=None, attachments=(): sent.append((subj, body)))

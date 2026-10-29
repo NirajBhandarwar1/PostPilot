@@ -10,8 +10,10 @@ import json
 import logging
 import re
 import smtplib
+from collections.abc import Sequence
 from email.message import EmailMessage
 from email.utils import make_msgid, parseaddr
+from typing import cast
 
 from .config import settings
 
@@ -28,7 +30,7 @@ def subject_for(batch_id: int, text: str, idea: int | None = None, version: str 
 
 
 def send(subject: str, body: str, html: str | None = None,
-         attachments: list[tuple[str, str]] = ()) -> str:
+         attachments: Sequence[tuple[str, str]] = ()) -> str:
     msg = EmailMessage()
     msg["From"] = settings.gmail_address
     msg["To"] = settings.to_email
@@ -50,9 +52,9 @@ def _plain_body(msg: email.message.Message) -> str:
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain" and not part.get_filename():
-                return part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", "replace")
+                return cast(bytes, part.get_payload(decode=True)).decode(part.get_content_charset() or "utf-8", "replace")
         return ""
-    return msg.get_payload(decode=True).decode(msg.get_content_charset() or "utf-8", "replace")
+    return cast(bytes, msg.get_payload(decode=True)).decode(msg.get_content_charset() or "utf-8", "replace")
 
 
 QUOTE_START = re.compile(r"^(?:>|-----\s*Original|_{5,}|(?:From|Sent|To|Subject|Date):\s)", re.I)
