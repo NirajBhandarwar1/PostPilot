@@ -16,7 +16,7 @@ from .config import ROOT
 # Settings in .env that are configuration, not secrets. Their values (model names, provider
 # lists) legitimately appear in code and docs, so matching them would block every commit.
 NOT_SECRET = re.compile(
-    r"^(LLM_PROVIDERS|WRITER_PROVIDERS|\w+_MODEL|(?:\w+_)?REASONING_EFFORT|USER_SETUP|CURRENT_MODELS|CYCLE_DAYS|"
+    r"^(LLM_PROVIDERS|WRITER_PROVIDERS|(?:SCOUT|IDEAS|OPTIONS|BRIEF|POST)_PROVIDERS|\w+_MODEL|(?:\w+_)?REASONING_EFFORT|USER_SETUP|CURRENT_MODELS|CYCLE_DAYS|"
     r"CHECK_MINUTES|RADAR_DAYS|OUTPUT_DIR|VOICE_FILE|OLLAMA_URL|CUSTOM_BASE_URL|CUSTOM_STRICT|"
     r"OPENAI_DAILY_TOKENS|PAID_EXPERIMENTS)$")
 
@@ -31,7 +31,7 @@ SKIP_DIRS = {".venv", ".git", "data", ".gstack", "__pycache__"}
 
 def secret_values(env_path: Path) -> dict[str, str]:
     """Name -> value for every .env entry that is a secret (6+ characters)."""
-    out = {}
+    out: dict[str, str] = {}
     if not env_path.exists():
         return out
     for line in env_path.read_text(encoding="utf-8").splitlines():

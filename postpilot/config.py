@@ -38,8 +38,8 @@ class Settings:
 
     github_token: str = env("GITHUB_TOKEN")
 
-    output_dir: Path = Path(env("OUTPUT_DIR", str(ROOT.parent / "linkedin")))
-    voice_file: Path = Path(env("VOICE_FILE", str(ROOT.parent / "linkedin" / "voice.md")))
+    output_dir: Path = Path(env("OUTPUT_DIR", str(ROOT / "output")))
+    voice_file: Path = Path(env("VOICE_FILE", str(ROOT / "voice.md")))
     data_dir: Path = field(default=ROOT / "data")
 
     @property

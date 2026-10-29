@@ -6,6 +6,7 @@ twice) the next one gets the same request. Output is validated against a Pydanti
 
 import contextlib
 import copy
+import dataclasses
 import json
 import logging
 import re
@@ -73,9 +74,10 @@ class NoCredit(RuntimeError):
     """The provider says the account has no credit left. Waiting won't help: skip it for a while."""
 
 
+# Cloudflare's free tier says the same when its 10,000 daily neurons are gone (it resets 00:00 UTC).
 # OpenAI answers HTTP 429 both for "too fast" (retry) and for "no credit left" (never retry).
 NO_CREDIT = re.compile(r"insufficient_quota|credit_balance|no credits remaining|exceeded your current quota|"
-                       r"billing_hard_limit|payment required", re.I)
+                       r"billing_hard_limit|payment required|used up your daily free allocation", re.I)
 NO_CREDIT_PAUSE_S = 30 * 60        # then try the provider again, in case you added credit
 _no_credit_until: dict[str, float] = {}
 
@@ -106,11 +108,17 @@ def _over_cap(p: "Provider") -> bool:
     return True
 
 
+# Each task can have its own model list (fallback order), e.g. BRIEF_PROVIDERS=groq,cloudflare.
+# Unset, a task uses WRITER_PROVIDERS. An entry may pin a model: "cloudflare:@cf/openai/gpt-oss-120b".
+TASK_ENV = {"scout": "SCOUT_PROVIDERS", "ideas": "IDEAS_PROVIDERS", "options": "OPTIONS_PROVIDERS",
+            "brief": "BRIEF_PROVIDERS", "post": "POST_PROVIDERS"}
+
+
 def providers(role: str = "default") -> list[Provider]:
     """Providers for a job, in fallback order.
 
-    role "default" (topic finding etc.) reads LLM_PROVIDERS; role "writer" (ideas, posts, code)
-    reads WRITER_PROVIDERS, falling back to LLM_PROVIDERS when that is not set."""
+    role "default" reads LLM_PROVIDERS; role "writer" reads WRITER_PROVIDERS (falling back to
+    LLM_PROVIDERS); the task roles in TASK_ENV read their own list, falling back to the writer list."""
     presets = {
         "openai": Provider(
             "openai", "https://api.openai.com/v1",
@@ -134,7 +142,8 @@ def providers(role: str = "default") -> list[Provider]:
             "cloudflare",
             f"https://api.cloudflare.com/client/v4/accounts/{env('CLOUDFLARE_ACCOUNT_ID')}/ai/v1",
             env("CLOUDFLARE_MODEL", "@cf/openai/gpt-oss-120b"), env("CLOUDFLARE_API_TOKEN"),
-            strict_schema=True, extra={}),
+            # Its models think before answering; at 1x the JSON was cut off (2026-10-30 bake-off).
+            strict_schema=True, extra={}, token_scale=2.5),
         "ollama": Provider(
             "ollama", env("OLLAMA_URL", "http://localhost:11434") + "/v1",
             env("OLLAMA_MODEL"), "ollama",  # only used once OLLAMA_MODEL is set
@@ -147,13 +156,17 @@ def providers(role: str = "default") -> list[Provider]:
     if role == "all":
         return list(presets.values())
     default_order = env("LLM_PROVIDERS", "groq,ollama")
-    order_text = env("WRITER_PROVIDERS", default_order) if role == "writer" else default_order
-    order = [p.strip() for p in order_text.split(",") if p.strip()]
+    writer_order = env("WRITER_PROVIDERS", default_order)
+    if role in TASK_ENV:                     # a task's own list, else the writer list
+        order_text = env(TASK_ENV[role], writer_order)
+    else:
+        order_text = writer_order if role == "writer" else default_order
     out = []
-    for name in order:
+    for item in (x.strip() for x in order_text.split(",")):
+        name, _, model = item.partition(":")        # "cloudflare:@cf/nvidia/nemotron-3-120b-a12b"
         p = presets.get(name)
-        if p and p.base_url and p.model and p.api_key:
-            out.append(p)
+        if p and p.base_url and (model or p.model) and p.api_key:
+            out.append(dataclasses.replace(p, model=model) if model else p)
     return out
 
 
@@ -282,9 +295,7 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
                     "name": schema.__name__, "strict": True, "schema": js}}
             else:
                 body["response_format"] = {"type": "json_object"}
-                body["messages"] = messages[:-1] + [{"role": "user", "content": (
-                    messages[-1]["content"] + "\n\nReply with only a JSON object matching this schema:\n"
-                    + json.dumps(js))}]
+                body["messages"] = [*messages[:-1], {"role": "user", "content": messages[-1]["content"] + "\n\nReply with only a JSON object matching this schema:\n" + json.dumps(js)}]
             try:
                 resp = _post(p, body)
                 # Count tokens for every answered call, valid or not: a bad answer still costs.
@@ -309,10 +320,7 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
             except (ValidationError, json.JSONDecodeError) as e:
                 log.warning("%s returned invalid JSON (attempt %d): %s", p.name, attempt + 1, str(e)[:300])
                 errors.append(f"{p.name}: invalid JSON")
-                messages = messages + [
-                    {"role": "assistant", "content": text[:2000]},
-                    {"role": "user", "content": f"That did not match the schema: {str(e)[:500]}. "
-                                                "Send the corrected JSON only."}]
+                messages = [*messages, {"role": "assistant", "content": text[:2000]}, {"role": "user", "content": f"That did not match the schema: {str(e)[:500]}. " "Send the corrected JSON only."}]
             except NoCredit as e:
                 _no_credit_until[p.name] = time.time() + NO_CREDIT_PAUSE_S
                 log.warning("%s: no credit left, using the next provider for the next %d min. %s",

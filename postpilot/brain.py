@@ -149,15 +149,13 @@ class CursorBrief(BaseModel):
 
 # ---------- prompts ----------
 
-SYSTEM = """You are PostPilot, a LinkedIn content strategist and AI engineer working for one person.
+_SYSTEM_TEMPLATE = """You are PostPilot, a LinkedIn content strategist and AI engineer working for one person.
 
-Who they are: a founding AI engineer at a US-based AI startup who builds and ships production
-AI systems from zero to one with a tiny team.
+Who they are: @@WHO@@
 
-Goal: make them stand out among millions on LinkedIn so that founders and hiring managers at
-AI startups, and technical recruiters, reach out with founding / senior AI engineering roles.
+Goal: @@GOAL@@
 
-What makes a founding AI engineer stand out:
+What makes a @@ROLE@@ stand out:
 - Being FIRST and HANDS-ON with the thing everyone is talking about this week: the new model,
   the viral GitHub repo, the new product. Everyone else reposts the news; this person
   already tested it, built with it, or broke it, and shows the result.
@@ -183,6 +181,27 @@ Hard rules:
 - Builds take about an hour, are legal and safe, and never automate LinkedIn or any site
   against its terms. No NSFW, no politics, no stock tips.
 - Paid models are fine when listed (their price is shown); keep a whole build under about $3."""
+
+
+# Who the posts are for. The defaults describe the project's original owner; set PERSONA_ROLE,
+# PERSONA_WHO and PERSONA_GOAL in .env to write for someone else.
+PERSONA = {
+    "ROLE": env("PERSONA_ROLE", "founding AI engineer"),
+    "WHO": env("PERSONA_WHO", "a founding AI engineer at a US-based AI startup who builds and ships production\n"
+                              "AI systems from zero to one with a tiny team."),
+    "GOAL": env("PERSONA_GOAL", "make them stand out among millions on LinkedIn so that founders and hiring managers at\n"
+                                "AI startups, and technical recruiters, reach out with founding / senior AI engineering roles."),
+}
+
+
+def render_system(persona: dict[str, str]) -> str:
+    text = _SYSTEM_TEMPLATE
+    for key, value in persona.items():
+        text = text.replace(f"@@{key}@@", value)
+    return text
+
+
+SYSTEM = render_system(PERSONA)
 
 
 UNTRUSTED_RULE = """Text between <untrusted_data> tags was scraped from the public web (headlines,
@@ -242,7 +261,7 @@ Rules:
 - Return the 9 biggest stories, biggest first. Keep every text field to one short sentence."""
     return llm.chat_json(
         "You are a sharp AI trend analyst. You only report what the evidence shows.",
-        prompt, TopicScan, max_tokens=4500, effort="low", role="writer")
+        prompt, TopicScan, max_tokens=4500, effort="low", role="scout")
 
 
 FORMATS = """Pick the format from the story's handle_type. The experiment is the post.
@@ -363,7 +382,7 @@ first real result people see and proof of skill. Formats:
 - Each idea's topic_number is the number of the story it is about. One idea per story.
 - Write recommended_reason first (name the story), then recommended = that story's topic_number. Recommend the most striking hands-on idea (a model face-off or a build with a viral repo) over a news-only one."""
     schema = _with_model_enum(llm.strict_schema(IdeaBatch), model_keys)
-    return llm.chat_json(SYSTEM, prompt, IdeaBatch, max_tokens=4500, json_schema=schema, role="writer")
+    return llm.chat_json(SYSTEM, prompt, IdeaBatch, max_tokens=4500, json_schema=schema, role="ideas")
 
 
 def make_one_idea(topic: dict, topic_number: int, history: list[str], voice: str, hooks: dict,
@@ -386,7 +405,7 @@ Formats:
 {IDEA_RULES}
 - topic_number = {topic_number}."""
     schema = _with_model_enum(llm.strict_schema(Idea), model_keys)
-    return llm.chat_json(SYSTEM, prompt, Idea, max_tokens=2500, json_schema=schema, role="writer")
+    return llm.chat_json(SYSTEM, prompt, Idea, max_tokens=2500, json_schema=schema, role="ideas")
 
 
 OPTION_RULES = """Rules for the options:
@@ -485,7 +504,7 @@ NEW = launched in the last 60 days. $in/$out = USD per 1M tokens; no price = fre
 {OPTION_RULES}
 {extra}"""
     schema = _with_model_enum(llm.strict_schema(BuildOptions), model_keys)
-    return llm.chat_json(SYSTEM, prompt, BuildOptions, max_tokens=6000, json_schema=schema, role="writer")
+    return llm.chat_json(SYSTEM, prompt, BuildOptions, max_tokens=6000, json_schema=schema, role="options")
 
 
 def _grounding(idea: dict) -> str:
@@ -546,7 +565,7 @@ Write:
   less, so links go here): the person's OWN repo as {{{{your repo link}}}} with one line on what
   it does, then credit the hot thing with its official link.
 - summary: one sentence."""
-    return llm.chat_json(SYSTEM, prompt, PostKit, max_tokens=4000, role="writer")
+    return llm.chat_json(SYSTEM, prompt, PostKit, max_tokens=4000, role="post")
 
 
 PYTHON = "py -3.12"   # installed on this machine; the plan pins it so Cursor does not guess
@@ -622,5 +641,5 @@ Rules:
 - demo_script: 5-8 shots for a 30-60 second recording.
 - readme_outline: for a public repo people may star: what it is, demo GIF at docs/demo.gif,
   quick start, how it works, results ({{{{placeholders}}}} until measured), credits/links."""
-    return llm.chat_json(SYSTEM, prompt, CursorBrief, max_tokens=8000, role="writer")
+    return llm.chat_json(SYSTEM, prompt, CursorBrief, max_tokens=8000, role="brief")
 

@@ -63,3 +63,30 @@ def test_openai_request_uses_completion_token_field(monkeypatch):
     assert llm.chat_json("s", "u", OK, max_tokens=1000, role="writer").ok
     assert "max_tokens" not in seen and seen["max_completion_tokens"] == 3000
     assert llm.USAGE["openai:gpt-6-sol"]["out"] >= 7
+
+
+def test_task_roles_use_their_own_list_and_can_pin_a_model(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "c")
+    monkeypatch.setenv("WRITER_PROVIDERS", "groq")
+    monkeypatch.setenv("BRIEF_PROVIDERS", "cloudflare:@cf/nvidia/nemotron-3-120b-a12b,groq")
+    brief = llm.providers("brief")
+    assert [(p.name, p.model) for p in brief] == [("cloudflare", "@cf/nvidia/nemotron-3-120b-a12b"),
+                                                  ("groq", "openai/gpt-oss-120b")]
+    assert [p.name for p in llm.providers("post")] == ["groq"]       # unset: the writer list
+
+
+def test_persona_defaults_are_filled_into_the_prompt():
+    from postpilot import brain
+    assert "@@" not in brain.SYSTEM
+    assert "founding AI engineer" in brain.SYSTEM
+
+
+def test_persona_can_be_replaced():
+    from postpilot import brain
+    text = brain.render_system({"ROLE": "data scientist", "WHO": "a data scientist at a bank",
+                                "GOAL": "get invited to speak at conferences"})
+    assert "What makes a data scientist stand out" in text
+    assert "a data scientist at a bank" in text
+    assert "founding AI engineer" not in text
