@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ValidationError
 
+from . import db
 from .config import env
 
 log = logging.getLogger("postpilot.llm")
@@ -183,6 +184,32 @@ def providers(role: str = "default") -> list[Provider]:
 # Only used when the caller passed no effort and the provider takes reasoning_effort.
 TASK_EFFORT = {"options": "low", "brief": "low"}
 
+MIN_PASS_SAMPLES = 5            # fewer results than this and a model keeps its configured place
+MIN_PASS_RATE = 0.5             # a model below this (with enough samples) goes to the end of the list
+
+
+def ordered(plist: list[Provider], role: str) -> list[Provider]:
+    """Keep the configured order, but move a model that keeps failing to the end (PROVIDER_ORDER=config turns it off).
+
+    A pass rate only says "returned valid JSON", not "wrote well", so it can demote but never promote: the user's
+    order encodes quality judgements (e.g. Gemma first) that a pass rate cannot see. Stats are per provider+model,
+    so one broken model does not drag down a healthy model on the same provider. Paid providers never move."""
+    if env("PROVIDER_ORDER", "results").lower() == "config" or len(plist) < 2:
+        return plist
+    try:
+        rates = db.llm_pass_rates(7)
+
+        def failing(p: Provider) -> bool:
+            good, total = rates.get((p.name, p.model, role), (0, 0))
+            return not p.paid and total >= MIN_PASS_SAMPLES and good / total < MIN_PASS_RATE
+
+        # Stable partition: relative order is kept among the healthy and among the demoted.
+        return [p for p in plist if not failing(p)] + [p for p in plist if failing(p)]
+    except Exception as e:
+        log.warning("provider ordering skipped: %s", str(e)[:200])
+        return plist
+
+
 def available() -> bool:
     return bool(providers())
 
@@ -232,6 +259,20 @@ def _estimate_tokens(*texts: str) -> int:
     """Rough input size: ~3.5 chars per token, plus 10% so we err on the big side."""
     return int(sum(len(t) for t in texts) / 3.5 * 1.1) + 1
 
+
+def _used(usage: dict) -> int:
+    return (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
+
+
+def _reason(e: Exception) -> str:
+    """A short class for a failed attempt, for the router stats."""
+    msg = str(e)
+    if "cut off" in msg:
+        return "cut_off"
+    if "HTTP 413" in msg or HOPELESS.search(msg):
+        return "too_big"
+    m = re.search(r"HTTP (\d{3})", msg)
+    return f"http_{m.group(1)}" if m else "error"
 
 HOPELESS = re.compile(r"request too large|context[_ ]length|maximum context|too many tokens|"
                       r"reduce the length|prompt is too long|payload too large", re.I)
@@ -290,7 +331,7 @@ def _post(p: Provider, body: dict, timeout: int = 600, patient: bool = True) -> 
 def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int = 4000,
               effort: str | None = None, json_schema: dict | None = None, role: str = "default"):
     """Ask for JSON matching `schema`. Returns a validated instance."""
-    plist = providers(role)
+    plist = ordered(providers(role), role)
     if not plist:
         raise RuntimeError("No model provider configured. Set GROQ_API_KEY (or another provider) in .env.")
     js = json_schema or strict_schema(schema)   # custom schema, e.g. with an enum of model ids
@@ -319,6 +360,7 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
                 if room < min(sent, MIN_OUTPUT_TOKENS):
                     log.warning("%s: request too big for its per-minute limit (%d tpm, ~%d room)", p.name, p.tpm, room)
                     errors.append(f"{p.name}: request too big for its per-minute limit")
+                    db.record_llm_call(p.name, p.model, role, False, "too_big")
                     break
                 sent = min(sent, room)
             body = {"model": p.model, "messages": messages, p.tokens_field: sent, **p.extra}
@@ -330,6 +372,8 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
             else:
                 body["response_format"] = {"type": "json_object"}
                 body["messages"] = [*messages[:-1], {"role": "user", "content": messages[-1]["content"] + "\n\nReply with only a JSON object matching this schema:\n" + json.dumps(js)}]
+            t0 = time.time()
+            usage: dict = {}
             try:
                 resp = _post(p, body, **({} if p is plist[-1] else {"patient": False}))
                 # Count tokens for every answered call, valid or not: a bad answer still costs.
@@ -350,20 +394,24 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
                 result = schema.model_validate_json(_extract_json(text))
                 log.info("%s/%s ok (%s in, %s out tokens)", p.name, p.model,
                          usage.get("prompt_tokens"), usage.get("completion_tokens"))
+                db.record_llm_call(p.name, p.model, role, True, "", time.time() - t0, _used(usage))
                 return result
             except (ValidationError, json.JSONDecodeError) as e:
                 log.warning("%s returned invalid JSON (attempt %d): %s", p.name, attempt + 1, str(e)[:300])
                 errors.append(f"{p.name}: invalid JSON")
+                db.record_llm_call(p.name, p.model, role, False, "invalid_json", time.time() - t0, _used(usage))
                 messages = [*messages, {"role": "assistant", "content": text[:2000]}, {"role": "user", "content": f"That did not match the schema: {str(e)[:500]}. " "Send the corrected JSON only."}]
             except NoCredit as e:
                 _no_credit_until[p.name] = time.time() + NO_CREDIT_PAUSE_S
                 log.warning("%s: no credit left, using the next provider for the next %d min. %s",
                             p.name, NO_CREDIT_PAUSE_S // 60, str(e)[:200])
                 errors.append(f"{p.name}: no credit")
+                db.record_llm_call(p.name, p.model, role, False, "no_credit", time.time() - t0)
                 break
             except Exception as e:
                 log.warning("%s failed: %s", p.name, str(e)[:300])
                 errors.append(f"{p.name}: {str(e)[:200]}")
+                db.record_llm_call(p.name, p.model, role, False, _reason(e), time.time() - t0, _used(usage))
                 break  # move on to the next provider
     raise RuntimeError("All model providers failed: " + " | ".join(errors))
 

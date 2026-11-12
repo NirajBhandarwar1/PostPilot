@@ -1,10 +1,13 @@
 """Tiny SQLite store: one row per batch of ideas, plus a key/value table."""
 
 import json
+import logging
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from .config import settings
+
+log = logging.getLogger("postpilot.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS batches (
@@ -17,6 +20,18 @@ CREATE TABLE IF NOT EXISTS batches (
     build_dir   TEXT
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS llm_calls (      -- one row per provider attempt: lets the router prefer what works
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    day      TEXT NOT NULL,                 -- UTC date, YYYY-MM-DD
+    provider TEXT NOT NULL,
+    model    TEXT,
+    role     TEXT NOT NULL,
+    ok       INTEGER NOT NULL,
+    reason   TEXT,                          -- "" when ok, else invalid_json / no_credit / too_big / http_503 ...
+    secs     REAL,
+    tokens   INTEGER
+);
+CREATE INDEX IF NOT EXISTS llm_calls_day ON llm_calls(day);
 """
 OUTCOMES_DDL = """
 CREATE TABLE IF NOT EXISTS outcomes (       -- what a published post did, per build (O2, D20)
@@ -317,3 +332,34 @@ def all_outcomes() -> list[sqlite3.Row]:
 def recent_batches(limit: int = 10) -> list[sqlite3.Row]:
     with connect() as c:
         return c.execute("SELECT * FROM batches ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+
+# ---------- model call results (router stats) ----------
+
+def record_llm_call(provider: str, model: str, role: str, ok: bool, reason: str = "",
+                    secs: float = 0.0, tokens: int = 0) -> None:
+    """Log one provider attempt. Never raises: a stats write must not break a real model call."""
+    try:
+        with connect() as c:
+            c.execute("INSERT INTO llm_calls(day,provider,model,role,ok,reason,secs,tokens) VALUES(?,?,?,?,?,?,?,?)",
+                      (datetime.now(UTC).strftime("%Y-%m-%d"), provider, model, role, int(ok), reason,
+                       round(secs, 2), tokens))
+    except Exception as e:
+        log.warning("could not record llm call: %s", str(e)[:200])
+
+
+def llm_pass_rates(days: int = 7) -> dict[tuple[str, str, str], tuple[int, int]]:
+    """(provider, model, role) -> (ok, total) over the last `days` UTC days (today included). {} on any error.
+
+    Per model, because one provider can serve models of very different health. "too_big" skips are left out:
+    they are a request-size limit, not a failure of the model."""
+    try:
+        since = (datetime.now(UTC) - timedelta(days=max(days, 1) - 1)).strftime("%Y-%m-%d")
+        with connect() as c:
+            rows = c.execute("SELECT provider, model, role, SUM(ok) AS ok, COUNT(*) AS n FROM llm_calls "
+                             "WHERE day >= ? AND COALESCE(reason, '') != 'too_big' "
+                             "GROUP BY provider, model, role", (since,)).fetchall()
+        return {(r["provider"], r["model"], r["role"]): (int(r["ok"] or 0), int(r["n"])) for r in rows}
+    except Exception as e:
+        log.warning("could not read llm pass rates: %s", str(e)[:200])
+        return {}
