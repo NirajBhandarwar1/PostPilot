@@ -79,7 +79,7 @@ def test_empty_catalog_has_no_enum():
 # ---------- R3: daily cap on paid tokens; #6 effort reaches OpenAI ----------
 
 def _fake_post_factory(log):
-    def fake_post(p, body, timeout=600):
+    def fake_post(p, body, timeout=600, **_):
         log.append((p.name, body))
         return {"choices": [{"finish_reason": "stop", "message": {"content": '{"ok": true}'}}],
                 "usage": {"prompt_tokens": 600, "completion_tokens": 400}}

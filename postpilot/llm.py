@@ -33,6 +33,7 @@ class Provider:
     tokens_field: str = "max_tokens"   # OpenAI's reasoning models want max_completion_tokens
     token_scale: float = 1.0           # reasoning models think before answering: allow more
     paid: bool = False                 # counts against the daily spend cap (R3)
+    tpm: int = 0                       # free-tier tokens per minute (input + reserved output); 0 = unknown
 
 
 # Token use per provider/model since the last reset_usage(), so each batch reports its own cost.
@@ -114,11 +115,19 @@ TASK_ENV = {"scout": "SCOUT_PROVIDERS", "ideas": "IDEAS_PROVIDERS", "options": "
             "brief": "BRIEF_PROVIDERS", "post": "POST_PROVIDERS"}
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(env(name, str(default)) or default)
+    except ValueError:
+        return default
+
+
 def providers(role: str = "default") -> list[Provider]:
     """Providers for a job, in fallback order.
 
     role "default" reads LLM_PROVIDERS; role "writer" reads WRITER_PROVIDERS (falling back to
     LLM_PROVIDERS); the task roles in TASK_ENV read their own list, falling back to the writer list."""
+    groq_tpm = _int_env("GROQ_TPM", 8000)
     presets = {
         "openai": Provider(
             "openai", "https://api.openai.com/v1",
@@ -129,11 +138,11 @@ def providers(role: str = "default") -> list[Provider]:
         "qwen": Provider(
             "qwen", "https://api.groq.com/openai/v1",
             env("QWEN_MODEL", "qwen/qwen3.8-27b"), env("GROQ_API_KEY"),
-            strict_schema=True, extra={}),
+            strict_schema=True, extra={}, tpm=groq_tpm),
         "groq": Provider(
             "groq", "https://api.groq.com/openai/v1",
             env("GROQ_MODEL", "openai/gpt-oss-120b"), env("GROQ_API_KEY"),
-            strict_schema=True, extra={"reasoning_effort": env("REASONING_EFFORT", "medium")}),
+            strict_schema=True, extra={"reasoning_effort": env("REASONING_EFFORT", "medium")}, tpm=groq_tpm),
         "openrouter": Provider(
             "openrouter", "https://openrouter.ai/api/v1",
             env("OPENROUTER_MODEL", "openai/gpt-oss-120b:free"), env("OPENROUTER_API_KEY"),
@@ -169,6 +178,10 @@ def providers(role: str = "default") -> list[Provider]:
             out.append(dataclasses.replace(p, model=model) if model else p)
     return out
 
+
+# Tasks whose answer is mostly copying and tidying: low reasoning effort saves tokens per minute.
+# Only used when the caller passed no effort and the provider takes reasoning_effort.
+TASK_EFFORT = {"options": "low", "brief": "low"}
 
 def available() -> bool:
     return bool(providers())
@@ -211,6 +224,15 @@ def _extract_json(text: str) -> str:
 
 # ---------- the call ----------
 
+TPM_MARGIN = 300          # headroom for the estimate being a little off
+MIN_OUTPUT_TOKENS = 2500  # below this room the answer would be cut off: do not even try
+
+
+def _estimate_tokens(*texts: str) -> int:
+    """Rough input size: ~3.5 chars per token, plus 10% so we err on the big side."""
+    return int(sum(len(t) for t in texts) / 3.5 * 1.1) + 1
+
+
 HOPELESS = re.compile(r"request too large|context[_ ]length|maximum context|too many tokens|"
                       r"reduce the length|prompt is too long|payload too large", re.I)
 
@@ -235,7 +257,9 @@ def probe(name: str) -> str:
         return f"failed: {str(e)[:160]}"
 
 
-def _post(p: Provider, body: dict, timeout: int = 600) -> dict:
+def _post(p: Provider, body: dict, timeout: int = 600, patient: bool = True) -> dict:
+    """One chat request. A busy provider is retried for a while only when `patient`; with another
+    provider waiting behind it, one short retry is enough (a real run lost 4 minutes to retries)."""
     req = urllib.request.Request(
         p.base_url.rstrip("/") + "/chat/completions",
         data=json.dumps(body).encode("utf-8"),
@@ -254,10 +278,10 @@ def _post(p: Provider, body: dict, timeout: int = 600) -> dict:
                 raise NoCredit(f"{p.name} has no credit left (add credit, then it is used again): {detail[:200]}") from None
             if e.code == 413 or HOPELESS.search(detail):
                 raise RuntimeError(f"{p.name} HTTP {e.code} (not retried): {detail}") from None
-            if e.code in (429, 500, 502, 503) and attempt < 3:
+            if e.code in (429, 500, 502, 503) and attempt < (3 if patient else 1):
                 wait = float(e.headers.get("retry-after") or 0) or 20 * (attempt + 1)
                 log.warning("%s HTTP %s, retrying in %.0fs: %s", p.name, e.code, wait, detail[:150])
-                time.sleep(min(wait, 120))
+                time.sleep(min(wait, 120 if patient else 30))
                 continue
             raise RuntimeError(f"{p.name} HTTP {e.code}: {detail}") from None
     raise RuntimeError(f"{p.name}: gave up after retries")
@@ -271,6 +295,7 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
         raise RuntimeError("No model provider configured. Set GROQ_API_KEY (or another provider) in .env.")
     js = json_schema or strict_schema(schema)   # custom schema, e.g. with an enum of model ids
     errors = []
+    effort = effort or TASK_EFFORT.get(role)
     # Inside a token budget (the eval) only paid writers run: a silent fall-through to a free
     # model would score the wrong model.
     if _BUDGET is not None and any(p.paid for p in plist):
@@ -286,8 +311,17 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
         for attempt in range(2):
             if p.paid and _BUDGET is not None and _BUDGET["used"] >= _BUDGET["limit"]:
                 raise BudgetExceeded(f"token budget of {_BUDGET['limit']:,} reached")
-            body = {"model": p.model, "messages": messages,
-                    p.tokens_field: int(max_tokens * p.token_scale), **p.extra}
+            sent = int(max_tokens * p.token_scale)
+            if p.tpm > 0:
+                # The provider counts input + reserved output against its per-minute limit, so shrink the
+                # reservation to fit; never raise it. No room for a usable answer: skip with no network call.
+                room = p.tpm - TPM_MARGIN - _estimate_tokens(*(m["content"] for m in messages), json.dumps(js))
+                if room < min(sent, MIN_OUTPUT_TOKENS):
+                    log.warning("%s: request too big for its per-minute limit (%d tpm, ~%d room)", p.name, p.tpm, room)
+                    errors.append(f"{p.name}: request too big for its per-minute limit")
+                    break
+                sent = min(sent, room)
+            body = {"model": p.model, "messages": messages, p.tokens_field: sent, **p.extra}
             if effort and "reasoning_effort" in body:
                 body["reasoning_effort"] = effort
             if p.strict_schema:
@@ -297,7 +331,7 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
                 body["response_format"] = {"type": "json_object"}
                 body["messages"] = [*messages[:-1], {"role": "user", "content": messages[-1]["content"] + "\n\nReply with only a JSON object matching this schema:\n" + json.dumps(js)}]
             try:
-                resp = _post(p, body)
+                resp = _post(p, body, **({} if p is plist[-1] else {"patient": False}))
                 # Count tokens for every answered call, valid or not: a bad answer still costs.
                 usage = resp.get("usage", {}) or {}
                 tally = USAGE.setdefault(f"{p.name}:{p.model}", {"calls": 0, "in": 0, "out": 0})
@@ -332,3 +366,4 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
                 errors.append(f"{p.name}: {str(e)[:200]}")
                 break  # move on to the next provider
     raise RuntimeError("All model providers failed: " + " | ".join(errors))
+

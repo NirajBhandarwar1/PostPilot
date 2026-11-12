@@ -516,7 +516,7 @@ def test_budget_is_checked_before_every_attempt_and_free_models_are_skipped(monk
     monkeypatch.setattr(llm, "providers", lambda role="default": [paid, free])
     calls = []
 
-    def post(p, body, timeout=600):
+    def post(p, body, timeout=600, **_):
         calls.append(p.name)
         return {"usage": {"prompt_tokens": 600, "completion_tokens": 0},
                 "choices": [{"finish_reason": "stop", "message": {"content": "not json"}}]}
@@ -572,7 +572,7 @@ def test_a_provider_without_credit_is_skipped_for_the_next_calls(monkeypatch):
     monkeypatch.setattr(llm, "_no_credit_until", {})
     calls = []
 
-    def post(p, body, timeout=600):
+    def post(p, body, timeout=600, **_):
         calls.append(p.name)
         if p.name == "openai":
             raise llm.NoCredit("openai has no credit")
