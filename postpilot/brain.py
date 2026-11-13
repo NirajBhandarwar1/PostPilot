@@ -120,7 +120,7 @@ class FileSpec(BaseModel):
 
 
 class BuildTask(BaseModel):
-    title: str                   # "CSV preview endpoint" (no "Step N")
+    title: str                   # "CSV preview endpoint" (no "Step N" or "Task N" prefix)
     who: str = "cursor"          # cursor = Cursor does it; you = the person (browser, account, download, app setup)
     minutes: int = 15            # honest time for this step
     details: str                 # exactly what to implement, concrete, no caveats
@@ -594,7 +594,10 @@ Write:
   for a real result or detail only the person can fill in; the rest is written out. Line 1 = hook. Short paragraphs with
   a blank line between. A turn near the end. Close with ONE specific question. Every result they
   have not produced yet, and every detail of their own product or work, is a {{{{placeholder}}}}.
-  State news facts only if a source above says them. Max 3 hashtags. No em dashes. Avoid
+  State news facts only if a source above says them. Never claim anything about their product,
+  team, employer or customers ("we're testing it on our admin panel"), or any time, cost or result
+  as fact unless it is in the facts above: write {{{{placeholders}}}} ("took {{{{minutes}}}}").
+  Max 3 hashtags. No em dashes. Avoid
   "game-changer", "delve", "unlock", "revolutionize", "in today's fast-paced world".
 - placeholders: what goes in each {{{{...}}}}.
 - steps: exact steps to run the experiment in about an hour, incl. what to screenshot/record.
@@ -650,13 +653,12 @@ Rules:
   product: the sign-up / API key steps (who=you) and the exact API or app feature the build uses.
   paper: the method or claim being reproduced at small scale, and its official code if any.
   news: no handle; the build illustrates the story with the listed models or public data.
-- Be decisive: pick the stack, file names, sample data and exact behavior. No "if X permits",
-  no "do not guess", no "you could use X or Y". All caveats and prerequisites go once in
-  before_you_start; steps are direct instructions.
+- Be decisive: pick the stack, file names, sample data, behavior. No "if X permits" or "X or Y".
+  Caveats and prerequisites go once in before_you_start; steps are direct instructions.
 - Step 1 is written automatically and ALREADY does: git init, `{PYTHON} -m venv .venv`, a
   requirements.txt with your `requirements` (+ pytest) installed, .gitignore and .env.example.
-  Recording the demo and publishing on GitHub are also added automatically at the end. Do NOT
-  repeat any of that. Your tasks are the build itself: 4-7 tasks, in order.
+  Recording the demo and publishing on GitHub are added automatically at the end. Do NOT repeat
+  any of that or write record/demo/publish/push steps. Your tasks are the build: 4-7, in order.
 - Run Python as `{VENV_PY}` and tests ONLY as `{TEST_CMD}` (pytest, files under tests/), in
   every step and done_when.
 - who=you for anything Cursor cannot do: downloads from a web page, accounts, keys, setting up
@@ -666,19 +668,27 @@ Rules:
 - minutes: honest for each task. The whole build should fit about {picked.get("minutes", 90)} minutes;
   if it cannot, cut scope (a smaller demo that runs beats a big one that doesn't).
 - uses_models: true only if the code itself calls an AI model API; then call ONLY the listed
-  models, cap calls with MAX_CALLS and cache responses. requirements: every pip package the code
-  imports (python-dotenv/openai only if used).
+  models, cap calls with MAX_CALLS and cache responses. requirements: every PIP (Python) package
+  the code imports (python-dotenv/openai only if used). Python packages go in pip, JavaScript ones
+  (next, react...) in npm; never mix. One language stack unless a second is truly needed.
+- Model calls: official OpenAI SDK v1: `client = OpenAI(api_key=..., base_url=...)` then
+  `client.chat.completions.create(model="<plain id>", messages=[...])`. The id is the part after
+  the provider prefix, never `provider:model`, in code and in prose; never `openai.ChatCompletion`.
+  Tests inject a fake client object; they never patch the library's attributes.
+- Image, audio or file input: say how it reaches the model (a vision-capable listed model and the
+  image message format `{{"type":"image_url",...}}`), or use text-only input. Never pretend a
+  text-only call reads an image.
+- A paid key: say so once in before_you_start, with a free-model alternative if one exists.
 - setup_commands: only non-interactive commands (git clone, npm install); the person reviews and
   runs them in a review step. done_when checks only run local files (pytest, the venv python).
-- Hardware: if the hot thing needs more than this laptop has (a GPU, more memory), keep it the
-  star and solve it in the plan: say exactly what it needs (from its docs) in before_you_start,
-  plus the cheapest real way to get it (a smaller official variant, a hosted API, or renting a
-  cloud GPU by the hour), and make the steps run there.
+- Hardware: if the hot thing needs more than this laptop has, keep it the star: in
+  before_you_start say what it needs (from its docs) and the cheapest real way to get it (smaller
+  official variant, hosted API, or hourly cloud GPU); make the steps run there.
 - Only software you own or open source with a permissive license; no scraping against terms of
   service, no clones of paid software.
 - visual_spec (demos): the screen layout, colors and type, and what is on screen in the first 3
   seconds of the video (the wow moment first). It must look polished in a screen recording.
-- demo_script: 5-8 shots for a 30-60 second recording.
+- demo_script: 5-8 shots for a 30-60 second recording; reuse visual_spec's colors and type, no second look.
 - readme_outline: for a public repo people may star: what it is, demo GIF at docs/demo.gif,
   quick start, how it works, results ({{{{placeholders}}}} until measured), credits/links."""
     return llm.chat_json(SYSTEM, prompt, CursorBrief, max_tokens=8000, role="brief")

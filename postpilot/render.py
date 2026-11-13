@@ -3,6 +3,7 @@
 Layout only: no model calls, no email sending, no database writes. pipeline.py decides what to
 say; this module decides how it looks."""
 
+import difflib
 import html
 import re
 import textwrap
@@ -148,12 +149,58 @@ def _requirements(brief) -> list[str]:
 PKG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._,-]+\])?(?:(?:==|>=|<=|~=|!=|>|<)[A-Za-z0-9.*+!-]+)?")
 
 
-def _extra_packages(brief) -> list[str]:
-    """Packages the model asked for beyond the template: installed only in the 🧑 review step.
-    Only valid package names survive, so nothing else can ride along into the pip command."""
+# Typographic hyphens and dashes. A model writes "docx‑edit" with U+2011 and the command then fails on
+# the person's machine, so anything that is a command, path, file, model id or package name gets ASCII.
+_DASHES = dict.fromkeys(map(ord, "‐‑‒–—−"), "-")
+_HYPHENS = dict.fromkeys(map(ord, "‐‑"), "-")     # never typographic intent: safe even in prose
+
+
+def _ascii(text: str) -> str:
+    return text.translate(_DASHES)
+
+
+def _split_requirements(brief) -> tuple[list[str], list[str]]:
+    """(extra packages, dropped names). Extras are what the model asked for beyond the template: installed
+    only in the 🧑 review step. Only valid package names survive, so nothing else can ride along into the
+    pip command; the dropped ones are listed so the person can see what was left out."""
     base = {p.lower() for p in TEMPLATE_PACKAGES | MODEL_PACKAGES}
-    return sorted({r.strip() for r in brief.requirements
-                   if PKG_RE.fullmatch(r.strip()) and r.strip().lower() not in base}, key=str.lower)
+    extra: set[str] = set()
+    dropped: list[str] = []
+    for r in brief.requirements:
+        r = _ascii(r).strip()
+        if not r:
+            continue
+        if not PKG_RE.fullmatch(r):
+            if r not in dropped:
+                dropped.append(r)
+        elif re.split(r"[\[<>=~!]", r, maxsplit=1)[0].lower() not in base:
+            extra.add(r)
+    return sorted(extra, key=str.lower), dropped
+
+
+def _extra_packages(brief) -> list[str]:
+    return _split_requirements(brief)[0]
+
+
+def _key(s: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", s.lower()).split())
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    """Drop near-identical lines ("Older model Claude 3.5: ..." / "Older model Claude 3.5. The: ..."): same
+    text after punctuation and case are ignored, one a prefix of the other, or 90% alike. First one wins."""
+    kept: list[str] = []
+    keys: list[str] = []
+    for it in items:
+        k = _key(it)
+        if not k:
+            continue
+        if any(k == o or (min(len(k), len(o)) >= 12 and (o.startswith(k) or k.startswith(o)))
+               or difflib.SequenceMatcher(None, k, o).ratio() >= 0.9 for o in keys):
+            continue
+        kept.append(it)
+        keys.append(k)
+    return kept
 
 
 # Text that fetches, installs or runs someone else's code: always a 🧑 step or a 🧑⚠ line, never
@@ -192,13 +239,52 @@ def _runs_third_party(text: str, handle: str = "") -> bool:
         rf"\b(run|start|launch|execute|serve|invoke|call|import)\b.{{0,60}}\b{re.escape(name)}\b", text.lower()))
 
 
+_FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+_FENCE_RUN = re.compile(r"`{3,}|~{3,}")
+_SPAN = re.compile(r"`[^`\n]+`")
+
+
+def _fenced(text: str, escape: bool = True) -> str:
+    """Multi-line model text with its code fences kept, but under our control. A fence line becomes a real
+    ``` fence (with a language tag, "text" if the model gave none); inside a block the lines stay verbatim
+    (a '#' there is code, not a heading) with ASCII dashes; an unclosed block is closed, so nothing the model
+    writes can swallow the rest of BUILD.md. Outside blocks, a leading '#', '>' or '**Cursor' is escaped
+    (escape=False for text that is itself a document, like the README outline) and any stray fence
+    mid-line becomes '''. Closing needs a bare fence line, as in CommonMark."""
+    out: list[str] = []
+    in_code = False
+    for ln in text.splitlines():
+        m = _FENCE.match(ln)
+        rest = m.group(2).strip() if m else ""
+        if m and not _FENCE_RUN.search(rest) and "`" not in rest:
+            if in_code and not rest:
+                out.append("```")
+                in_code = False
+                continue
+            if not in_code:
+                lang = re.sub(r"[^A-Za-z0-9+#.-]", "", rest.split()[0] if rest else "")[:15]
+                out.append("```" + (lang or "text"))
+                in_code = True
+                continue
+        ln = _FENCE_RUN.sub("'''", ln)
+        if in_code:
+            out.append(_ascii(ln))
+        else:
+            if escape:
+                ln = re.sub(r"^(\s*)(#|>|\*\*Cursor)", r"\1\\\2", ln)
+            out.append(_SPAN.sub(lambda m: _ascii(m.group(0)), ln))
+    if in_code:
+        out.append("```")
+    return "\n".join(out)
+
+
 def _safe(text: str, one_line: bool = False) -> str:
-    """Model text can't change the shape of BUILD.md: no code fences, no fake headings, steps,
+    """Model text can't change the shape of BUILD.md: no stray code fences, no fake headings, steps,
     quotes or 'Cursor:' lines. One-line fields (commands, titles) lose their line breaks."""
-    s = re.sub(r"`{3,}|~{3,}", "'''", _plain(text))
+    s = _plain(text)
     if one_line:
-        return " ".join(s.split())
-    return "\n".join(re.sub(r"^(\s*)(#|>|\*\*Cursor)", r"\1\\\2", ln) for ln in s.splitlines())
+        return _SPAN.sub(lambda m: _ascii(m.group(0)), _FENCE_RUN.sub("'''", " ".join(s.split())))
+    return _fenced(s)
 
 
 HUMAN_ONLY = "🧑⚠ (you check and run this, not Cursor): "
@@ -206,9 +292,48 @@ HUMAN_ONLY = "🧑⚠ (you check and run this, not Cursor): "
 
 def _guard(text: str, handle: str = "") -> str:
     """Model text Cursor reads outside the steps: lines that fetch, install or run third-party code
-    are marked human-only (and Cursor's prompt says never to run them)."""
-    return "\n".join(HUMAN_ONLY + ln if ln.strip() and _runs_third_party(ln, handle) else ln
-                     for ln in _safe(text).splitlines())
+    are marked human-only (and Cursor's prompt says never to run them). Inside a code block a marker
+    would end up in the pasted command, so the block gets one marker line above it instead."""
+    out: list[str] = []
+    opened: int | None = None
+    flagged = False
+    for ln in _safe(text).splitlines():
+        if ln.startswith("```"):
+            if opened is None:
+                opened, flagged = len(out), False
+            else:
+                if flagged:
+                    out.insert(opened, HUMAN_ONLY + "the code block below fetches, installs or runs code")
+                opened = None
+        elif opened is not None:
+            flagged = flagged or bool(ln.strip() and _runs_third_party(ln, handle))
+        elif ln.strip() and _runs_third_party(ln, handle):
+            ln = HUMAN_ONLY + ln
+        out.append(ln)
+    return "\n".join(out)
+
+
+_FIXED_TITLE = re.compile(r"\b(record\w*|gif|publish\w*|push\w*)\b|github repo|gh repo|go public", re.I)
+_FIXED_BODY = re.compile(r"gh repo create|git push|record (?:the |a )?(?:demo|screen)|screen[- ]?record|"
+                         r"publish (?:the |your )?(?:repo|project)", re.I)
+
+
+# The model numbers its own titles ("Step 2:", "Task 3 -", "4.", "5️⃣"); render numbers the steps itself.
+_TITLE_PREFIX = (r"^(?:(?:step|task)\s*\d+\s*[:.)\-–—]\s*)?"
+                 r"(?:(?:\d+️?⃣\s*[.):\-–—]?|\d+\s*[.):\-–—])\s*)?")
+
+
+def _model_tasks(tasks):
+    """The model's own tasks minus record-the-demo / publish-the-repo: render adds those fixed steps."""
+    keep = []
+    for t in tasks:
+        if re.search(r"readme|test", t.title, re.I):
+            keep.append(t)
+        elif _FIXED_TITLE.search(t.title) or _FIXED_BODY.search(f"{t.title}\n{t.details}"):
+            continue
+        else:
+            keep.append(t)
+    return keep
 
 
 def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks,
@@ -222,18 +347,18 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
     opt = idea.get("option") or {}
     repo = slug(brief.project_name)
     req = _requirements(brief)
-    extra_pkgs = _extra_packages(brief)
-    dropped_pkgs = sum(1 for r in brief.requirements if r.strip() and not PKG_RE.fullmatch(r.strip()))
+    extra_pkgs, dropped_pkgs = _split_requirements(brief)
     # Running the story's own repo is third-party code; calling a model or product API is not.
     handle = (idea.get("handle") or "") if idea.get("handle_type") == "github_repo" else ""
     known_hosts = factgate.SETUP_HOSTS
-    setup = [_safe(c, one_line=True) for c in brief.setup_commands if c.strip()]
+    setup = [_ascii(_safe(c, one_line=True)) for c in brief.setup_commands if c.strip()]
     commands = [c for c in setup if not _as_command(c).startswith("#")]
     prose = [c for c in setup if _as_command(c).startswith("#")]
     g = lambda text: _guard(text, handle)            # noqa: E731  (Part A text Cursor reads)
     batch_ref = str(batch_id) if batch_id else "<batch>"
     build_flag = f" --build {build_no}" if build_no else ""
-    total = sum(t.minutes for t in brief.tasks) + sum(FIXED_MINUTES.values())
+    tasks = _model_tasks(brief.tasks)
+    total = sum(t.minutes for t in tasks) + sum(FIXED_MINUTES.values())
     warnings = brief_warnings(idea, brief)
 
     one = lambda s: g(_safe(str(s or ""), one_line=True))        # noqa: E731  (header fields)
@@ -273,10 +398,10 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
     if brief.hot_thing_usage:
         L += [f"## How {_safe(idea.get('handle') or 'the hot thing', one_line=True)} is used in this build",
               g(brief.hot_thing_usage), ""]
-    L += ["## Done means", *[f"- [ ] {g(_safe(c, one_line=True))}" for c in brief.done_criteria], "",
-          "## Stack", *[f"- {g(_safe(x, one_line=True))}" for x in brief.stack], "",
-          "## Files", *[f"- `{_safe(f.path, one_line=True).replace('`', '')}`: {g(_safe(f.purpose, one_line=True))}"
-                        for f in brief.file_tree], ""]
+    L += ["## Done means", *[f"- [ ] {g(_safe(c, one_line=True))}" for c in brief.done_criteria if c.strip()], "",
+          "## Stack", *[f"- {g(_safe(x, one_line=True))}" for x in brief.stack if x.strip()], "",
+          "## Files", *[f"- `{_ascii(_safe(f.path, one_line=True)).replace('`', '')}`: "
+                        f"{g(_safe(f.purpose, one_line=True))}" for f in brief.file_tree], ""]
     if brief.visual_spec:
         L += ["## Look and feel (the demo video sells this)", g(brief.visual_spec), ""]
     if runs:
@@ -286,8 +411,10 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
         for k in runs:
             prov, mid = k.split(":", 1)
             base, key, _ = PROVIDER_API.get(prov, ("?", "?", "?"))
-            L.append(f"| `{mid}` | `{base}` | `{key}` |")
-        L.append("")
+            L.append(f"| `{_ascii(mid)}` | `{base}` | `{key}` |")
+        ids = ", ".join(f"`{_ascii(k.split(':', 1)[1])}`" for k in runs)
+        L += ["", "Pass exactly " + ("this id" if len(runs) == 1 else "these ids") + f" as `model=`, character for "
+              f"character, including any suffix such as `:free`: {ids}. Do not shorten, rename or \"fix\" it.", ""]
     L += ["## Sample data", g(brief.demo_data), "", "## Steps", ""]
 
     # Step 1 is always the same, so it is always right.
@@ -295,7 +422,8 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
     L += ["### Step 1 🤖: Create the project  (~10 min)",
           "Run these in the project folder (PowerShell):", "```powershell", "git init",
           "py -3.12 -m venv .venv",
-          f"Set-Content requirements.txt \"{chr(96)}n\".Join(@({', '.join(repr(r) for r in req)}))".replace("'", '"'),
+          # one package per line; valid in Windows PowerShell 5.1 (no .Join on a string, no backtick-n)
+          f"@({', '.join(repr(r) for r in req)}) | Set-Content requirements.txt",
           ".\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt", "```",
           "Create `.gitignore` with: `.env`, `.venv/`, `__pycache__/`, `.pytest_cache/`, `*.db`, `node_modules/`.",
           "Create `.env.example` with:", "```", *env_lines, "```",
@@ -318,11 +446,12 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
             if warn:
                 L.append(f"- ⚠ `{c[:80].replace('`', '')}`: " + "; ".join(w.split(": ", 1)[-1] for w in warn))
         if dropped_pkgs:
-            L.append(f"- ⚠ {dropped_pkgs} requested package name(s) were not valid and were left out.")
+            shown = ", ".join(f"`{_safe(n, one_line=True).replace('`', '')[:40]}`" for n in dropped_pkgs)
+            L.append(f"- ⚠ {len(dropped_pkgs)} requested package name(s) were not valid and were left out: {shown}.")
         L += ["", "**Done when:** you have checked and run every command above without errors.", ""]
         n += 1
-    for t in brief.tasks:
-        title = _safe(re.sub(r"^(?:step\s*\d+\s*[:.)-]\s*)?(?:\d+\s*[.):-]\s*)?", "", t.title, flags=re.I),
+    for t in tasks:
+        title = _safe(re.sub(_TITLE_PREFIX, "", t.title, flags=re.I),
                       one_line=True)
         details, done_when = _safe(t.details), _safe(t.done_when, one_line=True)
         # The title and the "Done when" check are read and run by Cursor too: gated like the details.
@@ -348,7 +477,7 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
           "Add a short repo description and 3-5 topics on GitHub (e.g. the hot thing's name).", "",
           "**Done when:** the repo page shows the README with the GIF.", ""]
     L += [f"## Tests (run with `{brain.TEST_CMD}`; no network, no keys)",
-          *[f"- {g(_safe(x, one_line=True))}" for x in brief.tests], "",
+          *[f"- {g(_safe(x, one_line=True))}" for x in brief.tests if x.strip()], "",
           "## Rules (must follow)",
           "- Never run a 🧑 step or a line marked 🧑⚠ yourself: stop and tell the person what to run.",
           "- Never print, log or commit secrets. `.env` stays in `.gitignore`.",
@@ -359,16 +488,16 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
           "a site's terms, no copies of paid software, no personal data.",
           "- No deleting files outside this folder; do not run downloaded binaries the person has not approved.",
           "- Keep it small and working: a smaller demo that runs beats a big one that doesn't.",
-          "", "## README (public repo)", *[f"- {g(_safe(x, one_line=True))}" for x in brief.readme_outline], "",
-          "## Known pitfalls", *[f"- {g(_safe(x, one_line=True))}" for x in brief.pitfalls]]
+          "", "## README (public repo)", *_readme_block(brief.readme_outline, handle), "",
+          "## Known pitfalls", *[f"- {g(_safe(x, one_line=True))}" for x in brief.pitfalls if x.strip()]]
     if plan_checks:
-        L += ["", "## Check before building", *[f"- {g(_safe(c, one_line=True))}" for c in plan_checks]]
+        L += ["", "## Check before building", *[f"- {g(_safe(c, one_line=True))}" for c in _dedupe(plan_checks)]]
     flags = report.get("structures", [])
     L += ["", "**Cursor: stop here. Part B is for the human.**", "", "---", "",
           "# PART B: Demo and LinkedIn post (for you)", "",
           "## 1. Record the demo (30-60 seconds)",
-          *[f"{k}. {_safe(x, one_line=True)}" for k, x in enumerate(brief.demo_script, 1)], "",
-          "## 2. The post (replace every {{...}} with your real results)", "", "```", _safe(post.strip()), "```", "",
+          *[f"{k}. {_safe(x, one_line=True)}" for k, x in enumerate(brief.demo_script, 1) if x.strip()], "",
+          "## 2. The post (replace every {{...}} with your real results)", "", "```", _flat(post.strip()), "```", "",
           f"Human score: {score[1]:.0f}/100 ({score[2]})",
           *(["Lines to rewrite by hand:", *[f"- {s['name']} (x{s['count']}): {s['fix']}" for s in flags]]
             if flags else []), "",
@@ -376,12 +505,44 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
           "## 4. Other opening lines", *[f"- {_safe(x, one_line=True)}" for x in kit.alt_hooks], "",
           "## 5. Image / video", _safe(kit.visual_spec), "",
           "## 6. First comment (post it right after publishing)", _safe(kit.first_comment) or "{{your repo link}}", "",
-          "## 7. Check before you post", *([f"- {_safe(c, one_line=True)}" for c in checks] or ["- nothing flagged"]), "",
+          "## 7. Check before you post", *([f"- {_safe(c, one_line=True)}" for c in _dedupe(checks)] or ["- nothing flagged"]), "",
           "## 8. After you post",
           f"- Record it: `python -m postpilot posted {batch_ref} <linkedin url>{build_flag}`",
           f"- Log who reaches out: `python -m postpilot inbound {batch_ref} --recruiters N --founders N{build_flag}`", "",
           "## Story sources", *[f"- {_safe(u, one_line=True)}" for u in idea.get("source_urls", [])[:5]]]
+    # Part A only: a non-breaking hyphen (U+2011) is the model's glitch, never wanted, and the model id
+    # must be exactly the one in the table (the model drops the ':free' suffix in its example code).
+    cut = L.index("# PART B: Demo and LinkedIn post (for you)")
+    model_ids = [_ascii(k.split(":", 1)[1]) for k in runs]
+    L[:cut] = [_exact_ids(x.translate(_HYPHENS), model_ids) for x in L[:cut]]
     return "\n".join(L)
+
+
+def _flat(text: str) -> str:
+    """Text that sits inside our own ``` fence (the post): it can't close the fence, but is otherwise verbatim,
+    so a '#hashtag' line is not escaped."""
+    return _FENCE_RUN.sub("'''", _plain(text))
+
+
+def _exact_ids(text: str, ids: list[str]) -> str:
+    """Make every mention of a model id (without its ':free'-style suffix) the exact id the API needs."""
+    for full in ids:
+        if ":" in full:
+            base = re.escape(full.rsplit(":", 1)[0])
+            text = re.sub(rf"(?<![\w/.:-]){base}(?![\w-]|:\w)", full.replace("\\", "\\\\"), text)
+    return text
+
+
+def _readme_block(outline: list[str], handle: str) -> list[str]:
+    """The README outline is the README's own lines, so it goes in one code block (four backticks, so its own
+    ``` fences nest) and is shown as written: no escaped '#', no bullet per line, no markers inside the text."""
+    text = "\n".join(_plain(x) for x in outline).strip("\n")
+    if not text.strip():
+        return []
+    body = _fenced(text, escape=False)
+    note = ["Lines in the README text below that clone or install are for the README's readers: write them, "
+            "never run them."] if any(_runs_third_party(ln, handle) for ln in body.splitlines()) else []
+    return [*note, "````markdown", *body.splitlines(), "````"]
 
 
 KIND_LABEL = {"demo-app": "LOOK WHAT I BUILT", "open-source-tool": "PUBLIC GITHUB REPO"}
@@ -617,8 +778,10 @@ def markdown_email(intro: str, md: str) -> str:
         s = line.strip()
         if s.startswith("```"):
             close_list()
+            n = len(s) - len(s.lstrip("`"))               # a 4-backtick block (README outline) can hold ``` lines
             j = i + 1
-            while j < len(lines) and not lines[j].strip().startswith("```"):
+            while j < len(lines) and not (lines[j].strip() and not lines[j].strip().strip("`")
+                                          and len(lines[j].strip()) >= n):
                 j += 1
             code = html.escape("\n".join(lines[i + 1:j]))
             out.append(f'<pre style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:6px;padding:10px;'

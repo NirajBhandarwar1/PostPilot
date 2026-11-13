@@ -629,23 +629,104 @@ RISKY_CALLS = [
 ]
 
 
+# JavaScript-only package names. `pip install next` would fetch an unrelated Python package, so a
+# model that mixes up the two ecosystems sends the person down a confusing dead end.
+NPM_ONLY_PACKAGES = frozenset({
+    "next", "react", "react-dom", "axios", "concurrently", "vercel", "tailwindcss", "typescript",
+    "eslint", "express", "jest", "vite", "webpack", "lodash", "three", "prisma", "postcss",
+    "autoprefixer", "nodemon", "prettier", "vue", "svelte", "angular", "rollup", "esbuild"})
+# Provider labels PostPilot puts in front of ids ("groq:llama-..."). Fine in its own fields, wrong
+# in code: the provider's API wants the plain id.
+PROVIDER_PREFIXES = "openai|groq|openrouter|cloudflare|anthropic|google|gemini|mistral|deepseek"
+OLD_OPENAI_CALL = re.compile(r"\bopenai\.ChatCompletion\b|\bChatCompletion\.create\b")
+# A test that patches the OpenAI library's own classes (OpenAI.chat, openai.OpenAI.chat.completions...)
+# breaks when the library changes; the plan should hand the code a fake client instead.
+PATCHES_OPENAI_LIB = re.compile(r"""(?:\bpatch(?:\.object)?|monkeypatch\.setattr)\(\s*["']?(?:openai\b|OpenAI\b)""")
+PREFIXED_MODEL_ARG = re.compile(
+    rf"""["']?\bmodel["']?\s*[=:]\s*["']({PROVIDER_PREFIXES}):([^"'\s]+)["']""", re.I)
+
+
+# pip options that take a value as the next word: that word is a file, path or URL, never a package.
+_PIP_VALUE_FLAGS = frozenset({"-r", "--requirement", "-c", "--constraint", "-e", "--editable", "-i", "--index-url",
+                              "--extra-index-url", "-f", "--find-links", "-t", "--target", "--prefix", "--root",
+                              "--python", "--platform", "--only-binary", "--no-binary", "--src", "--cache-dir"})
+# Words that follow a command in a sentence ("pip install -e . to verify it works"). Package names can look
+# just like them, so this list is what ends the arguments when nothing else does.
+_PIP_PROSE = frozenset({
+    "to", "the", "a", "an", "and", "or", "then", "so", "if", "for", "in", "on", "of", "with", "without", "verify",
+    "check", "ensure", "make", "sure", "that", "this", "it", "its", "entry", "point", "works", "work", "succeeds",
+    "should", "will", "can", "now", "again", "once", "after", "before", "when", "which", "as", "is", "are", "be",
+    "by", "from", "you", "your", "we", "run", "runs", "running", "install", "installs", "installed", "using", "use",
+    "uses", "see", "confirm", "test", "tests", "locally", "first", "afterwards", "also", "but", "not", "only", "just"})
+_PIP_NAME = re.compile(r"[a-z0-9][a-z0-9._-]*")
+
+
+def _pip_names(line: str) -> list[str]:
+    """Package names on any `pip install` in this line (extras, versions and quotes stripped).
+    Only real pip arguments count: flags (and the value of -r/-e/...), local paths ('.', 'pkg/dir'), URLs
+    and package specs. The first prose word ends the arguments, so "pip install -e . to verify it works"
+    names no package; `-e .` is an editable install of the local project, not an unknown package."""
+    names = []
+    for m in re.finditer(r"pip3?\s+install\s+([^\n#;&|]+)", line):
+        args = m.group(1).split()
+        i, local = 0, False
+        while i < len(args):
+            tok = args[i].strip("`'\"")
+            i += 1
+            if tok.startswith("-"):
+                if "=" not in tok and tok in _PIP_VALUE_FLAGS:
+                    i += 1                              # its value: a file, path or URL
+                    local = local or tok in ("-e", "--editable")
+                continue
+            if "://" in tok or tok.startswith(("git+", ".", "/", "~")) or "/" in tok or "\\" in tok \
+                    or tok.lower().endswith((".whl", ".zip", ".tar.gz", ".txt")):
+                local = True                            # a path or URL, not a package name
+                continue
+            ended = tok.endswith((".", ",", ";", ":", ")"))
+            spec = tok.rstrip(".,;:)").lower()
+            name = re.split(r"[<>=\[~!]", spec)[0].strip()
+            # after a local install only an explicit spec (version or extras) is a second package
+            if not name or name in _PIP_PROSE or not _PIP_NAME.fullmatch(name) or (local and spec == name):
+                break
+            names.append(name)
+            if ended:
+                break                                   # the sentence ended here
+    return names
+
+
+def _npm_msg(name: str) -> str:
+    return f"'{name}' is a JavaScript package: install it with npm, not pip (pip would fetch an unrelated Python package)"
+
+
+def _wrong_usage(line: str) -> list[str]:
+    """Mistakes the plan must not contain, in a command, step or code line: npm packages installed
+    with pip, the removed pre-v1 OpenAI call, and a provider-prefixed model id passed to the API."""
+    out = [_npm_msg(n) for n in _pip_names(line) if n in NPM_ONLY_PACKAGES]
+    if OLD_OPENAI_CALL.search(line):
+        out.append("Old OpenAI code: ChatCompletion was removed in the v1 SDK. "
+                   "Use client.chat.completions.create(...) instead")
+    if PATCHES_OPENAI_LIB.search(line):
+        out.append("Test patches the OpenAI library itself. Pass a fake client object into your own function "
+                   "instead; it is simpler and does not break when the library changes")
+    for m in PREFIXED_MODEL_ARG.finditer(line):
+        out.append(f"Model id '{m.group(1)}:{m.group(2)}' has a provider prefix. The API wants the plain id "
+                   f"'{m.group(2)}'; the prefix is only PostPilot's own label")
+    return out
+
+
 def scan_code(files: list[tuple[str, str]], extra_hosts: Collection[str] = frozenset()) -> list[str]:
     """'Check before you run' lines for model-written files: package installs or imports outside
     a small allowlist, shell commands, eval/exec, deletes, and network calls to unknown hosts.
     Never blocks; the person reads the list before running anything."""
     hosts = ALLOWED_HOSTS | set(extra_hosts)
-    out = []
+    out: list[str] = []
     for path, text in files:
         for n, line in enumerate(text.splitlines(), 1):
             where = f"{path}:{n}"
-            for m in re.finditer(r"pip3?\s+install\s+([^\n#;&|]+)", line):
-                args = m.group(1).split()
-                for i, pkg in enumerate(args):
-                    if i and args[i - 1] in ("-r", "--requirement", "-c", "--constraint"):
-                        continue                      # a requirements file, not a package
-                    name = re.split(r"[<>=\[]", pkg.lower())[0].strip()
-                    if name and not name.startswith("-") and name not in ALLOWED_PACKAGES:
-                        out.append(f"{where}: installs package '{name}': check it is real and wanted")
+            out.extend(f"{where}: {w}" for w in _wrong_usage(line))
+            for name in _pip_names(line):
+                if name not in ALLOWED_PACKAGES and name not in NPM_ONLY_PACKAGES:   # npm ones: flagged above
+                    out.append(f"{where}: installs package '{name}': check it is real and wanted")
             im = re.match(r"\s*(?:from\s+([A-Za-z_][\w]*)|import\s+([A-Za-z_][\w]*))", line)
             if im and path.endswith(".py"):
                 mod = (im.group(1) or im.group(2)).lower()
@@ -660,12 +741,55 @@ def scan_code(files: list[tuple[str, str]], extra_hosts: Collection[str] = froze
     return out
 
 
+# First-person claims a tool cannot know are true. A post that says them as fact puts words in the
+# author's mouth, so the person must replace them with something they really did.
+PERSONAL_CLAIMS = re.compile(
+    r"\b(?:our\s+(?:product|admin\s+panel|customers|users|clients|company|platform)"
+    r"|my\s+(?:team|users|customers|company)|at\s+my\s+(?:company|work|job)|at\s+work\s+we"
+    r"|in\s+production\s+at|we\s+shipped|i\s+shipped"
+    r"|i(?:'m|\s+am)\s+already\s+(?:testing|using|running))\b", re.I)
+# Timings and costs stated as something that happened ("took me 2 hours", "cost under $3").
+INVENTED_NUMBERS = re.compile(
+    r"\btook\s+(?:me|us)\s+(?:about\s+|just\s+|only\s+|under\s+|over\s+)?(?:\d+|an?|one|two|three)\s*"
+    r"(?:min\w*|hours?|hrs?|days?)\b"
+    r"|\b(?:built|done|finished|shipped|wrote|ran|working|set\s+up)\b[^.\n]{0,40}\bin\s+"
+    r"(?:under\s+|about\s+|just\s+|only\s+)?\d+\s*(?:min\w*|hours?|hrs?|days?)\b"
+    r"|\bcost\s+(?:me\s+)?(?:under\s+|about\s+|only\s+|just\s+|less\s+than\s+)?[$€£₹]\s?\d"
+    r"|\bsaved\s+(?:me\s+)?(?:an?|\d+)\s+(?:day|hours?|week)s?\b", re.I)
+
+
+def invented_claims(texts: list[str], evidence: list[str]) -> list[str]:
+    """Sentences with a personal claim, or a timing/cost, that nothing provided backs up.
+    {{placeholders}} are removed first (they are honest); a number that also appears in the
+    evidence is allowed."""
+    ev = " ".join(evidence)
+    out = []
+    for t in texts:
+        for s in sentences(t):
+            bare = re.sub(r"\{\{.*?\}\}", " ", s)
+            bare = bare.replace("’", "'")
+            hit = PERSONAL_CLAIMS.search(bare)
+            if not hit:
+                hit = INVENTED_NUMBERS.search(bare)
+                if hit and any(re.search(rf"(?<![\d.]){re.escape(n)}(?![\d])", ev)
+                                for n in (x.rstrip(".,") for x in re.findall(r"\d[\d.,]*", hit.group(0)))):
+                    hit = None
+            if hit:
+                out.append(f"Invented claim in the post: \"{s}\". "
+                           "Replace it with something you really did, or a {{placeholder}}.")
+    return out
+
+
 def scan_text(texts: list[str], topic: dict, signals: list[dict], cat: Catalog,
               runs: list[str], hf_names: Sequence[str] = ()) -> list[str]:
     """D12: the same scans on a finished post and its steps. Returns 'Check before you post' lines."""
     titles = _evidence(topic, signals)
     texts = [plain(t) for t in texts]
     out = []
+    for w in dict.fromkeys(w for t in texts for line in t.splitlines() for w in _wrong_usage(line)):
+        out.append(w)
+    invented = invented_claims(texts, titles)
+    out.extend(invented)
     for mention in model_mentions(" \n".join(texts), families(cat, hf_names)):
         if covered_by(mention, runs):
             continue
@@ -675,7 +799,8 @@ def scan_text(texts: list[str], topic: dict, signals: list[dict], cat: Catalog,
                   or any(normalize(mention) in normalize(t) for t in titles)):
             out.append(f"Model \"{mention}\" in the post was not found in catalogs or sources")
     for s in claim_sentences(texts, topic.get("entities", [])):
-        if not supported(s, titles, topic.get("entities", [])):
+        # An invented claim already has its own warning; a second one for the same sentence is noise.
+        if not supported(s, titles, topic.get("entities", [])) and not any(f'"{s}"' in w for w in invented):
             out.append(f"Unverified claim in the post: \"{s}\"")
     return out
 
