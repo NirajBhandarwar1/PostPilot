@@ -440,7 +440,7 @@ def build(batch_id: int, choice: int, send_email: bool = True, option: int | Non
             raise ValueError(f"Idea {choice} of batch #{batch_id} has no option {option} "
                              f"(run: python -m postpilot options {batch_id} {choice})")
         kind = opts[option - 1].get("kind", "")
-        idea = _idea_from_option(idea, opts[option - 1], listing.get("research"))
+        idea = _idea_from_option(idea, opts[option - 1], listing.get("research"), listing.get("evidence_pack"))
     saved = _saved_build(data, choice, option, tag) if reuse else None
     if saved:
         out = Path(saved["build_dir"])
@@ -485,7 +485,11 @@ def _make_plan(idea: dict, batch_id: int | None = None, build_no: int | None = N
     docs, docs_from = found.get("docs", ""), found.get("docs_from", "")
     if not docs:
         docs, docs_from = sources.docs_for(idea)
-    brief = brain.build_brief(idea, sources.research_digest(found), docs, docs_from)
+    pack_text = _pack_text(idea)
+    if pack_text:       # the saved fact list replaces the raw digest; only a short docs excerpt stays
+        brief = brain.build_brief(idea, pack_text, docs[:DOCS_WITH_PACK_CHARS], docs_from)
+    else:               # ideas saved before the evidence pack existed
+        brief = brain.build_brief(idea, sources.research_digest(found), docs[:DOCS_RAW_CHARS], docs_from)
 
     # The post: humanize and score; one rewrite if it still reads machine-written.
     kit, clean, report, before, after = _write_post(idea, _plan_summary(brief))
@@ -527,7 +531,44 @@ def _score(text: str):
     return detector.run(re.sub(r"\{\{[^}]*\}\}", "12", text), LEXICON)
 
 
+USE_EVIDENCE_PACK = True      # off = the old raw-digest prompts (the size benchmark compares both)
+DOCS_WITH_PACK_CHARS = 2000   # the pack already carries the docs' key facts; build_brief keeps a short excerpt
+DOCS_RAW_CHARS = 6000
+DIGEST_RAW_CHARS = 4000
+
+
+def _pack_text(idea: dict) -> str:
+    """The saved evidence pack of this idea as prompt text; '' for ideas saved without one (or a broken one)."""
+    raw = idea.get("evidence_pack")
+    if not raw:
+        return ""
+    try:
+        return brain.render_evidence(brain.EvidencePack.model_validate(raw))
+    except Exception as e:
+        log.warning("saved evidence pack is unreadable (%s); using the raw research", e)
+        return ""
+
+
+def _make_pack(idea: dict, digest: str, docs: str) -> dict | None:
+    """Build the evidence pack once per options request. Never fatal: without it the prompts fall back to
+    the raw digest. The fact gate and scans keep reading the raw sources and titles, not this pack."""
+    if not USE_EVIDENCE_PACK:
+        return None
+    try:
+        pack = brain.make_evidence(idea, digest, docs)
+    except Exception as e:
+        log.warning("evidence pack failed (%s); using the raw research digest", e)
+        return None
+    if not pack.facts:
+        log.warning("evidence pack came back with no facts; using the raw research digest")
+        return None
+    return pack.model_dump()
+
+
 def _facts(idea: dict) -> str:
+    pack_text = _pack_text(idea)
+    if pack_text:
+        return "\n".join([pack_text, f"- {idea['handle_facts']}"] if idea.get("handle_facts") else [pack_text])
     r = idea.get("research") or {}
     out = [f"- YouTube video \"{v['title']}\": {v['views']:,} views" for v in r.get("videos", [])[:3]]
     out += [f"- GitHub repo {g['title'].split(':')[0]}: {g['stars']:,} stars" for g in r.get("repos", [])[:3]]
@@ -562,9 +603,9 @@ def _write_post(idea: dict, plan: str = ""):
 
 # ---------- step 2b: build options for the picked idea ----------
 
-def _idea_from_option(idea: dict, o: dict, research: dict | None = None) -> dict:
+def _idea_from_option(idea: dict, o: dict, research: dict | None = None, pack: dict | None = None) -> dict:
     """The picked option replaces the rough plan; topic, sources and checks stay."""
-    return {**idea,
+    return {**idea, **({"evidence_pack": pack} if pack else {}),
             "title": o["title"], "format": o["kind"], "role_angle": o["why_hiring_cares"],
             "build_plan": o["what_you_build"] + " Steps: " + " ".join(
                 f"({n}) {s}" for n, s in enumerate(o.get("steps_preview", []), 1)),
@@ -664,9 +705,15 @@ def _make_options(idea: dict) -> tuple[dict, list[str]]:
 
     found = sources.research(idea)
     digest = sources.research_digest(found)
-    if found.get("docs"):
-        digest += (f"\n\nOfficial docs ({found['docs_from']}): what it is for and how it is used:\n"
-                   + found["docs"][:2500])
+    docs = found.get("docs", "")
+    pack = _make_pack(idea, digest, docs[:2500])
+    if pack:
+        digest = brain.render_evidence(brain.EvidencePack.model_validate(pack))
+    else:
+        digest = digest[:DIGEST_RAW_CHARS]
+        if docs:
+            digest += (f"\n\nOfficial docs ({found['docs_from']}): what it is for and how it is used:\n"
+                       + docs[:2500])
     known = [t.lower() for t in sources.research_titles(found)]
 
     kept: list[dict] = []
@@ -704,7 +751,7 @@ def _make_options(idea: dict) -> tuple[dict, list[str]]:
     reason = re.sub(r"\b(Option|option|#)\s?(\d)\b",            # writer's numbers -> shown numbers
                     lambda m: f"{m.group(1)}{' ' if m.group(1) != '#' else ''}{shown.get(int(m.group(2)), '(dropped)')}",
                     raw.get("recommended_reason", ""))
-    result = {"options": kept, "recommended": rec or 1, "research": found,
+    result = {"options": kept, "recommended": rec or 1, "research": found, "evidence_pack": pack,
               "story_intro": raw.get("story_intro", ""),
               "recommended_reason": reason if rec else "Best remaining option after the fact check.",
               "writers": sorted(llm.USAGE)}

@@ -473,6 +473,46 @@ OPTION_RULES = """Rules for the options:
   another option is clearly stronger."""
 
 
+class EvidenceFact(BaseModel):
+    fact: str      # one short, self-contained statement, numbers exactly as in the source
+    source: str    # youtube | github | hn | linkedin | x | web | docs
+
+
+class EvidencePack(BaseModel):
+    facts: list[EvidenceFact]
+
+
+EVIDENCE_MAX_FACTS = 10
+EVIDENCE_FACT_CHARS = 240      # a fact is one line; a longer one is the model pasting source text
+
+
+def make_evidence(idea: dict, research_text: str, docs_text: str = "") -> EvidencePack:
+    """One small fact list per idea, so the options, plan and post prompts stop re-sending raw research."""
+    prompt = f"""Extract the facts about "{idea.get("handle") or idea.get("topic", "")}" that a writer
+needs to propose builds and write about it. Use ONLY what the text below says; never add, infer or
+round anything. Copy numbers (views, stars, points, sizes, versions, prices) exactly.
+{UNTRUSTED_RULE}
+
+## Research (YouTube, GitHub, Hacker News, LinkedIn, X, web)
+{_untrusted(research_text or "(none)")}
+
+## Official docs
+{_untrusted(docs_text or "(none)")}
+
+Return at most {EVIDENCE_MAX_FACTS} facts, most useful first: what the thing is and does, how it is
+installed or called, what people already built with it and how popular that is, limits or costs.
+One short sentence each, with source = youtube, github, hn, linkedin, x, web or docs."""
+    # gpt-oss thinks inside max_tokens; at 900 Groq cut the JSON off, so leave room and think less.
+    pack = llm.chat_json(SYSTEM, prompt, EvidencePack, max_tokens=2200, effort="low", role="scout")
+    facts = [EvidenceFact(fact=f.fact.strip()[:EVIDENCE_FACT_CHARS], source=f.source.strip().lower()[:12])
+             for f in pack.facts if f.fact.strip()]
+    return EvidencePack(facts=facts[:EVIDENCE_MAX_FACTS])
+
+
+def render_evidence(pack: EvidencePack) -> str:
+    return "\n".join(f"- [{f.source}] {f.fact}" for f in pack.facts)
+
+
 def make_options(idea: dict, voice: str, model_keys: list[str], notes: dict | None = None,
                  research_text: str = "", extra: str = "") -> BuildOptions:
     """Step 2b: after the person picks an idea, propose 3-5 concrete things to build on it."""
@@ -545,7 +585,7 @@ About them: {voice[:2500] or "(no profile: write plainly, first person, confiden
 
 {("## What will actually be built (the post must describe exactly this: same program, same "
   "inputs, same outputs, same names)" + chr(10) + plan) if plan else ""}
-{("## Real numbers you may cite (from the research; quote them exactly)" + chr(10) + facts) if facts else ""}
+{("## Real numbers you may cite (from the research; quote them exactly)" + chr(10) + _untrusted(facts)) if facts else ""}
 
 {POST_STYLE}
 {feedback}
