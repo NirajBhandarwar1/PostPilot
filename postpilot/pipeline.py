@@ -624,7 +624,15 @@ def _check_option(o: dict, idea: dict, cat: factgate.Catalog) -> factgate.Verdic
                "build_plan": o["what_you_build"] + " " + " ".join(o.get("steps_preview", [])),
                "why_hot": "", "hook_options": [o["hook"]], "needs": o.get("needs", []),
                "models_to_run": o.get("models_to_run", [])}
-    return factgate.check_idea(as_idea, topic, sigs, cat)
+    v = factgate.check_idea(as_idea, topic, sigs, cat)
+    if v.ok:                     # probe only options that survived: the cache makes repeats free
+        for key in dict.fromkeys(o.get("models_to_run") or []):
+            provider, _, model = key.partition(":")
+            ok, why = llm.probe_model(provider, model)
+            if not ok:       # keep the option, but say plainly that nobody has confirmed this model works
+                v.unverified.append(f"Need to check: could not confirm model '{key}' works right now ({why}). "
+                                    "Try one call with it before you build on it.")
+    return v
 
 
 def _next_tag(existing: dict | None) -> str:

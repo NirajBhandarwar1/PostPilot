@@ -71,6 +71,7 @@ def test_task_roles_use_their_own_list_and_can_pin_a_model(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "c")
     monkeypatch.setenv("WRITER_PROVIDERS", "groq")
     monkeypatch.setenv("BRIEF_PROVIDERS", "cloudflare:@cf/nvidia/nemotron-3-120b-a12b,groq")
+    monkeypatch.delenv("POST_PROVIDERS", raising=False)      # a developer's own .env may set it
     brief = llm.providers("brief")
     assert [(p.name, p.model) for p in brief] == [("cloudflare", "@cf/nvidia/nemotron-3-120b-a12b"),
                                                   ("groq", "openai/gpt-oss-120b")]

@@ -298,6 +298,68 @@ def probe(name: str) -> str:
         return f"failed: {str(e)[:160]}"
 
 
+# ---------- per-model live probe: a model is only recommended after it answered a real call ----------
+
+PROBE_OK_S = 12 * 3600       # a model that answered stays verified this long
+PROBE_FAIL_S = 3600          # a failure (404, no credit, 429, 5xx, timeout) is re-tested after this
+PROBE_TIMEOUT_S = 45
+
+
+def probe_model(provider: str, model: str, now: float | None = None) -> tuple[bool, str]:
+    """Send one tiny real chat request to exactly this provider + model: (True, "ok") or (False, short reason).
+
+    Being listed as free in a catalog proves nothing (a listed model can 404, need credit, or be
+    rate-limited), so only an answered call counts as verified. Anything uncertain (429, 5xx,
+    timeout, no credit) is "not verified". Results are cached in the meta table. Never raises."""
+    now = time.time() if now is None else now
+    key = f"probe:{provider}:{model}"
+    try:
+        hit = json.loads(db.get_meta(key, "") or "null")
+        if isinstance(hit, dict):
+            ttl = PROBE_OK_S if hit.get("ok") else PROBE_FAIL_S
+            if 0 <= now - float(hit["at"]) <= ttl:
+                return bool(hit["ok"]), str(hit.get("why", ""))
+    except Exception:
+        pass                                    # a broken cache entry just means "probe again"
+    ok, why = _probe_call(provider, model)
+    try:
+        db.set_meta(key, json.dumps({"at": now, "ok": ok, "why": why}))
+    except Exception as e:
+        log.warning("could not cache probe result for %s:%s: %s", provider, model, e)
+    return ok, why
+
+
+def _probe_call(provider: str, model: str) -> tuple[bool, str]:
+    try:
+        preset = next((x for x in providers("all") if x.name == provider), None)
+        if not preset or not (preset.base_url and preset.api_key):
+            return False, f"no API key configured for {provider}"
+        p = dataclasses.replace(preset, model=model)
+        body = {"model": model, p.tokens_field: 64,
+                "messages": [{"role": "user", "content": "Reply with the single word: ok"}]}
+        req = urllib.request.Request(
+            p.base_url.rstrip("/") + "/chat/completions", data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {p.api_key}",
+                     "User-Agent": "postpilot/0.4"})
+        # One attempt, no retry/sleep loop like _post: a probe must be quick and a busy model is "unknown".
+        with urllib.request.urlopen(req, timeout=PROBE_TIMEOUT_S) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+        msg = (resp.get("choices") or [{}])[0].get("message") or {}
+        # Reasoning models may spend all 64 tokens thinking: a reasoning field still proves the model ran.
+        if (msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content") or "").strip():
+            return True, "ok"
+        return False, "empty reply"
+    except urllib.error.HTTPError as e:
+        detail = ""
+        with contextlib.suppress(Exception):
+            detail = e.read().decode("utf-8", "replace")
+        if NO_CREDIT.search(detail):
+            return False, f"HTTP {e.code}, no credit"
+        return False, f"HTTP {e.code}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {str(e)[:80]}"
+
+
 def _post(p: Provider, body: dict, timeout: int = 600, patient: bool = True) -> dict:
     """One chat request. A busy provider is retried for a while only when `patient`; with another
     provider waiting behind it, one short retry is enough (a real run lost 4 minutes to retries)."""

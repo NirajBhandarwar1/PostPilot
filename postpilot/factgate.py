@@ -301,10 +301,23 @@ def estimate_cost(keys: list[str], cat: Catalog, prompts: int = 20, tok_in: int 
     return total
 
 
+# Env vars a provider needs before any of its models can be called (same names as render.PROVIDER_API;
+# kept here because render imports factgate).
+PROVIDER_KEYS = {"openai": ("OPENAI_API_KEY",), "groq": ("GROQ_API_KEY",), "openrouter": ("OPENROUTER_API_KEY",),
+                 "cloudflare": ("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN")}
+
+
+def has_key(provider: str) -> bool:
+    """Is this provider's API key configured? A catalog listing is public, so a model of a provider
+    without a key must never be recommended: the person could not run it."""
+    names = PROVIDER_KEYS.get(provider, ())
+    return bool(names) and all(env(n) for n in names)
+
+
 def shortlist(cat: Catalog, focus_words: list[str], per_provider: int = 12) -> list[Model]:
     """The models offered to the idea writer: all Groq chat models, then the most relevant
     Cloudflare/OpenRouter ones (names matching the hot topics first). Keeps prompts small
-    enough for Groq's free 8K tokens/minute."""
+    enough for Groq's free 8K tokens/minute. Only providers with a configured key are offered."""
     words = {w for w in (normalize(x) for x in focus_words) if len(w) >= 3}
     out = []
     def relevant(m: Model) -> bool:
@@ -315,6 +328,8 @@ def shortlist(cat: Catalog, focus_words: list[str], per_provider: int = 12) -> l
         return [m for _, m in sorted(enumerate(ms), key=lambda im: (not relevant(im[1]), not im[1].new, im[0]))]
 
     for provider in ("groq", "cloudflare", "openrouter", "openai"):
+        if not has_key(provider):
+            continue
         free = rank([m for m in cat.models if m.provider == provider and not m.paid])
         paid = rank([m for m in cat.models if m.provider == provider and m.paid])
         out.extend(free if provider == "groq" else free[:per_provider])

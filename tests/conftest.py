@@ -14,6 +14,14 @@ def isolated_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def models_answer(monkeypatch):
+    """Options only keep models that answered a live call; tests never make one, so assume they all do.
+    tests/test_verified_models.py restores the real probe_model to test it."""
+    from postpilot import llm
+    monkeypatch.setattr(llm, "probe_model", lambda provider, model, now=None: (True, "ok"))
+
+
+@pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     """Any real HTTP call in a test is a bug: fail loudly."""
     import urllib.request
