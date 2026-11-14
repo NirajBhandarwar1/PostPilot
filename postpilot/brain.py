@@ -569,7 +569,7 @@ POST_STYLE = """Style targets (a human-writing scorer checks these, and recruite
 
 
 def build_post(idea: dict, voice: str, hooks: dict, feedback: str = "", plan: str = "",
-               facts: str = "") -> PostKit:
+               facts: str = "", previous: str = "") -> PostKit:
     hook_detail = [{k: h[k] for k in ("name", "template", "example", "trap")}
                    for h in hooks["hooks"] if h["id"] in idea.get("hook_formula_ids", [])]
     picked = {k: idea[k] for k in ("title", "why_hot", "role_angle", "build_plan", "hook_options", "visual")
@@ -588,6 +588,7 @@ About them: {voice[:2500] or "(no profile: write plainly, first person, confiden
 {("## Real numbers you may cite (from the research; quote them exactly)" + chr(10) + _untrusted(facts)) if facts else ""}
 
 {POST_STYLE}
+{("## The draft to edit (return an improved version of THIS text, not a new post)" + chr(10) + previous) if previous else ""}
 {feedback}
 Write:
 - post_draft: the full LinkedIn post, 900-1300 characters. At most 4 {{{{placeholders}}}}, each

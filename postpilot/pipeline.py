@@ -379,18 +379,53 @@ def resend_unsent() -> None:
 
 # ---------- step 2: build ----------
 
+def _plan_glance(doc: str) -> str:
+    """One line about the plan, read from BUILD.md itself so a resent plan gets the same summary."""
+    bits = []
+    story = re.search(r"Type: ([^|\n]+?)\s*\|\s*Difficulty: ([^|\n]+?)\s*\|\s*Realistic time: ([^\n]+)", doc)
+    if story:
+        bits += [story.group(1).strip(), re.split(r" [–-] ", story.group(2).strip())[0],
+                 "about " + story.group(3).strip().lstrip("~")]
+    steps = re.findall(r"^### Step \d+ (🤖|🧑)", doc, re.M)
+    if steps:
+        bits.append(f"{len(steps)} steps ({steps.count('🧑')} are yours to do)")
+    score = re.search(r"Human score: (\d+)/100", doc)
+    if score:
+        bits.append(f"post score {score.group(1)}/100")
+    return " · ".join(bits)
+
+
+def _checks_count(doc: str) -> int:
+    """How many things BUILD.md asks you to verify (before building and before posting)."""
+    n = 0
+    for pattern in (r"## Check before building\n(.*?)\n(?:Cursor: stop|#)", r"Check before you post\n(.*?)\n(?:## )?\d\. After you post"):
+        m = re.search(pattern, doc, re.S)
+        if m:
+            n += len([ln for ln in m.group(1).splitlines() if ln.strip()])
+    return n
+
+
 def _email_build(batch_id: int, choice: int, title: str, summary: str, doc: str) -> None:
+    """A short email: the plan lives in the BUILD.md attachment, so nobody has to read it in the mail."""
     if not settings.has_email:
         return
-    intro = (f"{summary}\nYour build plan is attached (BUILD.md) and is also below.\n"
-             "1. Do the 'Before you start' list.\n"
-             "2. Make an empty folder, open it in Cursor, and put BUILD.md in it.\n"
-             f"3. In Cursor's Agent chat, paste: {CURSOR_PROMPT}\n"
-             "4. When it works, follow Part B to record the demo and post.\n")
-    body = intro + "\n" + "=" * 60 + "\n\n" + doc
+    lines = [summary, "", "Your full plan is attached as BUILD.md: the steps for Cursor, the demo shot list "
+             "and your post draft."]
+    glance = _plan_glance(doc)
+    if glance:
+        lines += ["", f"At a glance: {glance}"]
+    checks = _checks_count(doc)
+    if checks:
+        lines.append(f"Check first: {checks} thing(s) to verify before you build or post (listed in BUILD.md).")
+    lines += ["", "How to use it:",
+              "1. Open BUILD.md and do its 'Before you start' list. Then make an empty folder, open it in "
+              "Cursor and put BUILD.md in it.",
+              f"2. In Cursor's Agent chat, paste: {CURSOR_PROMPT}",
+              "3. When it works, follow Part B of BUILD.md to record the demo and post."]
+    intro = "\n".join(lines) + "\n"
     # kind="plan": a reply to this email ("step 4 failed") is never read as a pick.
     mailer.send(mailer.subject_for(batch_id, f"Build plan ready: {title[:60]}", idea=choice, kind="plan"),
-                body, html=markdown_email(intro, doc), attachments=[("BUILD.md", doc)])
+                intro, html=markdown_email(intro, ""), attachments=[("BUILD.md", doc)])
 
 
 def _saved_build(data: dict, choice: int, option: int | None, tag: str = "") -> dict | None:
@@ -580,22 +615,34 @@ def _facts(idea: dict) -> str:
 
 
 def _write_post(idea: dict, plan: str = ""):
-    """Post draft -> humanizer -> score. While it is under target, rewrite with the exact failing
-    checks as feedback (up to POST_TRIES drafts), and keep the best one."""
-    best, feedback, facts = None, "", _facts(idea)
+    """Post draft -> humanizer -> score. While it is under target, rewrite the BEST draft so far with
+    the exact failing checks as feedback (up to POST_TRIES drafts) and keep the best one. Measured on
+    the free models: a rewrite that starts over often scores lower, so each rewrite edits the best
+    text, and the loop stops after the first rewrite that does not beat it (no wasted tokens)."""
+    best, feedback, previous, facts = None, "", "", _facts(idea)
     for attempt in range(POST_TRIES):
-        kit = brain.build_post(idea, _voice(), HOOKS, feedback=feedback, plan=plan, facts=facts)
+        kit = brain.build_post(idea, _voice(), HOOKS, feedback=feedback, plan=plan, facts=facts,
+                               previous=previous)
         clean, report = humanizer.humanize(kit.post_draft, LEXICON)
         before, after = _score(kit.post_draft), _score(clean)
-        if best is None or after[1] > best[4][1]:
+        improved = best is None or after[1] > best[4][1]
+        if improved:
             best = (kit, clean, report, before, after)
         if after[1] >= POST_TARGET and after[2] == "PASS":
             break
+        assert best is not None
+        if not improved:
+            log.info("post rewrite %d scored %.0f, not above the best %.0f; keeping the best",
+                     attempt + 1, after[1], best[4][1])
+            break
+        assert best is not None
+        kit, clean, _r, _b, after = best
         weak = [(n, d) for n, (sc, d) in sorted(after[0].items(), key=lambda kv: kv[1][0]) if sc < 75][:3]
-        feedback = (f"REWRITE: the previous draft scored {after[1]:.0f}/100 on the human-writing check "
+        previous = clean
+        feedback = (f"REWRITE: the draft below scored {after[1]:.0f}/100 on the human-writing check "
                     f"(target {POST_TARGET}). Fix exactly these: "
                     + "; ".join(f"{n.lower()}: {d}" for n, d in weak)
-                    + ". Keep the facts and the structure; change the wording.")
+                    + ". Edit the draft: keep its facts, structure and placeholders; change the wording.")
         log.info("post draft %d scored %.0f (%s)%s", attempt + 1, after[1], after[2],
                  "; rewriting" if attempt + 1 < POST_TRIES else "; keeping the best")
     return best

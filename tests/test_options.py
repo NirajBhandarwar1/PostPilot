@@ -184,10 +184,11 @@ def test_build_emails_the_plan_back(monkeypatch, tmp_path):
     bid = db.add_batch({"ideas": [IDEA], "options": {"1": {"options": [o]}}}, status="options_sent")
     pipeline.build(bid, 1, option=1)
     subj, body, att, html = sent[0]
-    assert "<h1" in html and "<pre" in html and "stop and tell me exactly what to do" in html
+    assert "stop and tell me exactly what to do" in html and "<h1" not in html     # short email, plan attached
     assert subj.startswith(f"[PostPilot #{bid}.1 plan] Build plan ready")
     assert att[0][0] == "BUILD.md" and "# PART A" in att[0][1]
-    assert "# PART A" in body and "Read BUILD.md. Build Part A one step at a time" in body      # readable in the email too
+    assert "# PART A" not in body and len(body) < 1600                                          # the plan is not pasted in
+    assert "Read BUILD.md. Build Part A one step at a time" in body                             # the prompt to paste is
 
 
 def test_post_rewritten_until_it_reads_human(monkeypatch):
@@ -200,7 +201,7 @@ def test_post_rewritten_until_it_reads_human(monkeypatch):
             "checker so you can rerun all 20 cases in 3 minutes. Here's what broke first: {{first break}}.")
     calls = []
 
-    def build_post(idea, v, h, feedback="", plan="", facts=""):
+    def build_post(idea, v, h, feedback="", plan="", facts="", previous=""):
         calls.append(feedback)
         return brain.PostKit(summary="s", steps=[], post_draft=flat if len(calls) == 1 else good,
                              placeholders=[], alt_hooks=[], visual_spec="v", fact_checks=[])
