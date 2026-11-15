@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ValidationError
 
-from . import db
+from . import db, health
 from .config import env
 
 log = logging.getLogger("postpilot.llm")
@@ -444,6 +444,8 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
                 tally["calls"] += 1
                 tally["in"] += usage.get("prompt_tokens") or 0
                 tally["out"] += usage.get("completion_tokens") or 0
+                health.record_usage(p.name, p.model, usage.get("prompt_tokens") or 0,    # free-tier quota (never raises)
+                                    usage.get("completion_tokens") or 0)
                 if p.paid:
                     spent = (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
                     _add_paid_tokens(spent)
@@ -465,6 +467,7 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
                 messages = [*messages, {"role": "assistant", "content": text[:2000]}, {"role": "user", "content": f"That did not match the schema: {str(e)[:500]}. " "Send the corrected JSON only."}]
             except NoCredit as e:
                 _no_credit_until[p.name] = time.time() + NO_CREDIT_PAUSE_S
+                health.mark_used_up(p.name)         # the provider's word beats our own count
                 log.warning("%s: no credit left, using the next provider for the next %d min. %s",
                             p.name, NO_CREDIT_PAUSE_S // 60, str(e)[:200])
                 errors.append(f"{p.name}: no credit")
@@ -476,4 +479,3 @@ def chat_json(system: str, user: str, schema: type[BaseModel], max_tokens: int =
                 db.record_llm_call(p.name, p.model, role, False, _reason(e), time.time() - t0, _used(usage))
                 break  # move on to the next provider
     raise RuntimeError("All model providers failed: " + " | ".join(errors))
-

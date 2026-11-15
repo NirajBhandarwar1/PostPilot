@@ -25,7 +25,7 @@ import json
 import logging
 import sys
 
-from . import db, llm, mailer, pipeline
+from . import db, health, llm, mailer, pipeline
 from .config import settings
 
 
@@ -48,11 +48,19 @@ def status() -> None:
     print(f"Model          : {ok(bool(plist))}  " + (" -> ".join(f"{p.name}:{p.model}" for p in plist) or "set GROQ_API_KEY or OLLAMA_MODEL in .env"))
     print("Writer         : " + (" -> ".join(f"{p.name}:{p.model}" for p in writers) or "same as Model"))
     print(f"Paid tokens    : {llm.paid_tokens_today():,} used today of {llm.daily_cap():,} (OPENAI_DAILY_TOKENS)")
+    for line in health.quota_lines() or ["no free-tier use recorded today"]:
+        print(f"Free quota     : {line}")
     print(f"Gmail          : {ok(settings.has_email)}  ({settings.gmail_address or 'not set'})")
     print(f"Voice profile  : {ok(bool(pipeline._voice()))}  ({settings.voice_file})")
     print(f"Output folder  : {settings.output_dir}")
     print(f"Cycle          : every {settings.cycle_days:g} days, replies checked every {settings.check_minutes:g} min")
     print(f"Last scout     : {db.get_meta('last_scout_at', 'never')}")
+    rates = db.llm_pass_rates(7)
+    if rates:
+        print("\nLast 7 days (model calls that gave usable output):")
+        for (prov, model, role), (good, total) in sorted(rates.items()):
+            short = model.rsplit("/", 1)[-1][:32]       # the tail names the model; the vendor prefix is noise
+            print(f"  {prov:12} {short:32} {role:8} {good}/{total}")
     print("\nRecent batches:")
     for b in db.recent_batches(5):
         titles = [i["title"] for i in json.loads(b["ideas_json"])["ideas"]]

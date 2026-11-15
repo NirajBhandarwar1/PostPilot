@@ -18,7 +18,7 @@ from .config import ROOT
 NOT_SECRET = re.compile(
     r"^(LLM_PROVIDERS|WRITER_PROVIDERS|(?:SCOUT|IDEAS|OPTIONS|BRIEF|POST)_PROVIDERS|\w+_MODEL|(?:\w+_)?REASONING_EFFORT|USER_SETUP|CURRENT_MODELS|CYCLE_DAYS|"
     r"CHECK_MINUTES|RADAR_DAYS|OUTPUT_DIR|VOICE_FILE|OLLAMA_URL|CUSTOM_BASE_URL|CUSTOM_STRICT|"
-    r"OPENAI_DAILY_TOKENS|PAID_EXPERIMENTS)$")
+    r"OPENAI_DAILY_TOKENS|CLOUDFLARE_DAILY_NEURONS|GROQ_DAILY_TOKENS|PAID_EXPERIMENTS)$")
 
 # Known key shapes: a prefix plus a long run of key characters (bare prefixes like "sk-" or
 # "hf_" would also match ordinary words such as "risk-" or "hf_api").

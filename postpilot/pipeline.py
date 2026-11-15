@@ -20,7 +20,7 @@ import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from . import brain, db, factgate, llm, mailer, sources
+from . import brain, db, factgate, health, llm, mailer, sources
 from .config import ROOT, settings
 from .render import (
     CURSOR_PROMPT,
@@ -332,6 +332,7 @@ def scout(send_email: bool = True) -> int | None:
         run_path.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
     if not batch or not batch["ideas"]:
         log.warning("no ideas passed this run; nothing saved or sent")
+        health.log_health(batch["stats"] if batch else {"pitched": 0, "dropped": 0})
         return None
 
     batch_id = db.add_batch(batch, status="draft")
@@ -342,6 +343,7 @@ def scout(send_email: bool = True) -> int | None:
              batch_id, st["pitched"], st["failed_first"], st["regenerated"], st["dropped"], st["unverified"])
     for model, u in llm.USAGE.items():
         log.info("tokens %s: %d calls, %d in, %d out", model, u["calls"], u["in"], u["out"])
+    health.log_health(st)
 
     if send_email and settings.has_email:
         _send_ideas(batch_id, text)
