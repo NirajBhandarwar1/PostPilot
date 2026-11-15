@@ -7,5 +7,6 @@
 | [003](003-human-gate-for-third-party-commands.md) | Every third-party install/run command goes through a human review step | Accepted |
 | [004](004-per-build-state-merge-on-save.md) | Track state per build, save with merge-on-write in SQLite | Accepted |
 | [005](005-writer-model-routing.md) | GPT-6 writes under a daily cap; free models are an ordered backup | Accepted |
+| [006](006-evaluation-layer.md) | Evaluate with rules on golden stories, plus real-use signals; no model judge | Accepted |
 
 Status key: Accepted = decided and implemented.

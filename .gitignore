@@ -12,3 +12,4 @@ CLAUDE.md
 .ruff_cache/
 output/
 voice.md
+evals/results/

@@ -1,0 +1,236 @@
+{
+  "name": "news-leak",
+  "captured_at": "2026-11-12T15:48:37+00:00",
+  "idea": {
+    "topic_number": 1,
+    "title": "Claude Code leaks: what the numbers say",
+    "topic": "Claude Code privacy/security blow‑ups (email leakage, password exposure, Goldman Sachs pull‑back)",
+    "format": "hot‑take",
+    "short_title": "Claude Code leaks: what the numbers say",
+    "the_news": "Claude Code was found to send users’ email addresses to third‑party sites and expose passwords in public repos, prompting Goldman Sachs to pull the tool.",
+    "what_you_do": "I scraped the top 20 Hacker News comments on the three leak threads, counted unique email mentions and password patterns, and measured how quickly the leaks propagated to public forks.",
+    "post_shows": "A quick audit that quantifies the exposure and shows the speed at which agentic LLMs can leak data in production.",
+    "why_hired": "Shows I can audit risky LLM integrations fast and spot production‑ready safety gaps.",
+    "difficulty": "medium",
+    "why_hot": "",
+    "role_angle": "Risk‑aware LLM integrator",
+    "build_plan": "",
+    "build_minutes": 90,
+    "hook_options": [
+      "Claude Code sent 1,600+ HN points of data leaks—here’s the 5‑minute audit I ran to count every exposed email.",
+      "Goldman Sachs quit Claude Code. I traced the leak chain in under 2 hours—what a production team must know."
+    ],
+    "hook_formula_ids": [
+      1,
+      9
+    ],
+    "visual": "",
+    "needs": [
+      "Hacker News API access",
+      "GitHub search token",
+      "a laptop"
+    ],
+    "models_to_run": [],
+    "topic_kind": "security",
+    "heat": 44.13966729170783,
+    "heat_where": "Hacker News x3",
+    "entities": [
+      "anthropic",
+      "claude‑code",
+      "privacy",
+      "goldman sachs",
+      "security‑bug"
+    ],
+    "source_urls": [
+      "https://github.com/anthropics/claude-code/issues/107757",
+      "https://www.thestateofai.com/news/goldman-sachs-claude-code-traders-bankers",
+      "https://apiiro.com/blog/coding-agents-leaking-secrets-github-dont-ask-again"
+    ],
+    "evidence_titles": [
+      "Claude Code sends your email address to websites",
+      "Goldman Sachs is pulling Claude Code from its bankers and traders",
+      "Claude Code's \"Don't Ask Again\" exposes passwords in 1,122 public GitHub files"
+    ],
+    "evidence": [
+      "[Hacker News] Claude Code sends your email address to websites (1615 points, 535 comments)",
+      "[Hacker News] Goldman Sachs is pulling Claude Code from its bankers and traders (902 points, 496 comments)",
+      "[Hacker News] Claude Code's \"Don't Ask Again\" exposes passwords in 1,122 public GitHub files (626 points, 429 comments)"
+    ],
+    "handle_facts": "",
+    "check_before_posting": [],
+    "handle_type": "news",
+    "handle": "claude‑code‑privacy‑issues",
+    "est_cost": 0.0
+  },
+  "option": {
+    "short_title": "Secure‑by‑Design Claude Code Wrapper",
+    "what_it_is": "A tiny CLI (`cc‑shield`) that sits between your code and Claude Code. It strips PII (emails, passwords) from the prompt, injects a sandbox token, and logs every outbound request. The wrapper then calls Claude Code via its npm package to get the suggestion and returns it to the user.",
+    "what_you_show": "A 45‑second screen‑recording: a vulnerable Python script with a hard‑coded password is fixed by `cc‑shield` – the password never appears in Claude Code’s response nor in any network trace (verified with Wireshark). The repo is public: https://github.com/nirajb/cc‑shield",
+    "why_hired": "Shows I can ship production‑grade AI tooling that protects user data, a must‑have skill for any early‑stage AI product.",
+    "twist": "Most leak‑explanations just point out the problem; this demo proves a practical, reusable fix that any startup can drop into its pipeline.",
+    "title": "Demo‑app",
+    "kind": "demo-app",
+    "inspired_by": "Claude Code leaks what? (398 views)",
+    "your_edge": "Built a privacy guard in <45 min, tested with real PII, and open‑sourced it.",
+    "what_you_build": "CLI wrapper + test suite",
+    "post_shows": "GitHub stars & forks within 24 h",
+    "why_hiring_cares": "Security‑first engineering, rapid prototyping, and open‑source impact.",
+    "who_it_impresses": "Founders needing fast, safe AI‑assisted dev tools.",
+    "stand_out": "Turns a headline‑making flaw into a product feature you can ship tomorrow.",
+    "minutes": 40,
+    "difficulty": "easy",
+    "difficulty_why": "Uses existing npm package, simple stream processing, no heavy compute.",
+    "steps_preview": [
+      "npm i @anthropic-ai/claude-code",
+      "Write `cc‑shield.js` to read stdin, regex‑redact PII, call Claude Code, output result.",
+      "Add a Wireshark capture to prove no PII leaves the box."
+    ],
+    "models_to_run": [],
+    "needs": [
+      "Node 18",
+      "internet"
+    ],
+    "risk": "Running Claude Code still contacts Anthropic; the wrapper must be used in trusted environments.",
+    "hook": "I built a privacy‑guard CLI around Claude Code that stops email/password leaks – {{result}}.",
+    "check_before_posting": [],
+    "orig_pos": 1,
+    "est_cost": 0.0
+  },
+  "research": {
+    "query": "claude‑code‑privacy‑issues",
+    "videos": [
+      {
+        "title": "The Claude personal data leak explained in 6 minutes",
+        "views": 1750,
+        "channel": "AI Agents A-Z",
+        "age": "4d ago",
+        "url": "https://www.youtube.com/watch?v=2UabTJbD3_U"
+      },
+      {
+        "title": "How to Fix a Claude Account Locked or Login Problem (Troubleshooting Guide)",
+        "views": 873,
+        "channel": "Tech Help Daily",
+        "age": "2w ago",
+        "url": "https://www.youtube.com/watch?v=nR_aR3glDTo"
+      },
+      {
+        "title": "Claude Code leaks what?",
+        "views": 398,
+        "channel": "HuseyinCodes",
+        "age": "5d ago",
+        "url": "https://www.youtube.com/watch?v=Puhc7yluY0c"
+      },
+      {
+        "title": "ログイン用メールアドレスが外部サイトへ Claude Codeで報告【朝ドパIT】",
+        "views": 302,
+        "channel": "朝ドパITエンジニア",
+        "age": "6d ago",
+        "url": "https://www.youtube.com/watch?v=rvEr4q8Q2E0"
+      },
+      {
+        "title": "claude-mem Setup Sent Past Prompts Without Consent: What's Fixed, What to Check [Zundamon Explains]",
+        "views": 295,
+        "channel": "AIの歩き方",
+        "age": "9d ago",
+        "url": "https://www.youtube.com/watch?v=Ip_yoZ8FxhQ"
+      },
+      {
+        "title": "The Bug Fix That Made Claude Code Leak Users' Emails",
+        "views": 80,
+        "channel": "Pressure Coder",
+        "age": "4d ago",
+        "url": "https://www.youtube.com/watch?v=W10Q0UNQZSw"
+      },
+      {
+        "title": "Неделя в ИИ: Gemini учится на чатах, утечки Claude Code, Kimi",
+        "views": 70,
+        "channel": "ai_bro",
+        "age": "2d ago",
+        "url": "https://www.youtube.com/watch?v=mKJhkPrJsE0"
+      },
+      {
+        "title": "Claude Code sent users' emails to websites as a contact address",
+        "views": 65,
+        "channel": "The Daily Diff",
+        "age": "5d ago",
+        "url": "https://www.youtube.com/watch?v=4RBjmSCsYGI"
+      }
+    ],
+    "repos": [],
+    "hn": [],
+    "linkedin": [],
+    "x": [],
+    "docs": "[![npm]](https://www.npmjs.com/package/@anthropic-ai/claude-code)\n\n[npm]: https://img.shields.io/npm/v/@anthropic-ai/claude-code.svg?style=flat-square\n\nClaude Code is an agentic coding tool that lives in your terminal, understands your codebase, and helps you code faster by executing routine tasks, explaining complex code, and handling git workflows -- all through natural language commands. Use it in your terminal, IDE, or tag @claude on Github.\n\n**Learn more in the [official documentation](https://code.claude.com/docs/en/overview)**.\n\n## Data collection, usage, and retention\nWhen you use Claude Code, we collect feedback, which includes usage data (such as code acceptance or rejections), associated conversation data, and user feedback submitted via the `/bug` command.\n\n## How we use your data\nSee our [data usage policies](https://code.claude.com/docs/en/data-usage).",
+    "docs_from": "README of github.com/anthropics/claude-code",
+    "web": [
+      {
+        "title": "Chrome for Desktop",
+        "url": ""
+      },
+      {
+        "title": "مساعدة متصفح Google Chrome",
+        "url": ""
+      },
+      {
+        "title": "下载和安装 Google Chrome",
+        "url": ""
+      },
+      {
+        "title": "如何解决打开chrome后会自动打开必应搜索主页？ - 知乎",
+        "url": ""
+      },
+      {
+        "title": "为什么有人爱 Firefox 胜过 Chrome 呢？ - 知乎",
+        "url": ""
+      },
+      {
+        "title": "Google Chrome Ajutor",
+        "url": ""
+      }
+    ]
+  },
+  "evidence_pack": {
+    "facts": [
+      {
+        "fact": "Claude Code is an agentic coding tool that lives in your terminal, understands your codebase, and helps you code faster by executing routine tasks, explaining complex code, and handling git workflows through natural‑language commands.",
+        "source": "docs"
+      },
+      {
+        "fact": "Claude Code can be used in your terminal, IDE, or by tagging @claude on Github.",
+        "source": "docs"
+      },
+      {
+        "fact": "When you use Claude Code, Anthropic collects feedback, including usage data (such as code acceptance or rejections), associated conversation data, and user feedback submitted via the `/bug` command.",
+        "source": "docs"
+      },
+      {
+        "fact": "The npm package for Claude Code is `@anthropic-ai/claude-code` (shown by the npm badge).",
+        "source": "docs"
+      },
+      {
+        "fact": "YouTube video “The Claude personal data leak explained in 6 minutes” has 1,750 views.",
+        "source": "youtube"
+      },
+      {
+        "fact": "YouTube video “Claude Code leaks what?” has 398 views.",
+        "source": "youtube"
+      },
+      {
+        "fact": "YouTube video “The Bug Fix That Made Claude Code Leak Users' Emails” has 80 views.",
+        "source": "youtube"
+      },
+      {
+        "fact": "YouTube video “Claude Code sent users' emails to websites as a contact address” has 65 views.",
+        "source": "youtube"
+      },
+      {
+        "fact": "YouTube video “How to Fix a Claude Account Locked or Login Problem” has 873 views.",
+        "source": "youtube"
+      },
+      {
+        "fact": "The provided sources do not list any pricing or usage limits for Claude Code.",
+        "source": "docs"
+      }
+    ]
+  }
+}

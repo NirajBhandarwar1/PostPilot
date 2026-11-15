@@ -1,0 +1,330 @@
+{
+  "name": "github-repo",
+  "captured_at": "2026-11-12T15:48:37+00:00",
+  "idea": {
+    "topic_number": 2,
+    "title": "anthropics/skills Build‑With‑Repo: Agent‑Desktop in 45 min",
+    "topic": "Explosion of AI‑agent tooling on GitHub (anthropics/skills, OpenMausBot, agent‑browser, security‑audit‑skill, agent‑desktop)",
+    "format": "build-with-repo",
+    "short_title": "Agent‑Desktop in 45 min",
+    "the_news": "Six AI‑agent repos exploded in stars this week; anthropics/skills leads with 193 k stars.",
+    "what_you_do": "I cloned anthropics/skills, wired it to a free LLM, and built a CLI that opens a web page, extracts the headline, and writes a 2‑sentence summary.",
+    "post_shows": "The CLI runs end‑to‑end in {{result}} seconds, but the browser‑skill crashes on pages with infinite scroll – a limitation I patched in {{result}} lines of code.",
+    "why_hired": "Demonstrates I can spin up production‑ready agent tooling from a fresh repo in under an hour.",
+    "difficulty": "easy",
+    "why_hot": "anthropics/skills",
+    "role_angle": "I can turn a trending open‑source stack into a shipped feature on day 1.",
+    "build_plan": "1️⃣ git clone https://github.com/anthropics/skills. 2️⃣ Install dependencies (Python 3.11). 3️⃣ Connect the repo’s Agent‑Desktop skill to openrouter:nvidia/nemotron-3.5-lightning (free). 4️⃣ Write a thin wrapper script that launches the skill, points it at https://news.ycombinator.com, parses the first headline, and calls the LLM for a summary. 5️⃣ Time the run and note any exceptions.",
+    "build_minutes": 55,
+    "hook_options": [
+      "I built a web‑scraping AI agent with anthropics/skills in 45 min – see where it breaks.",
+      "From zero to a working Agent‑Desktop in under an hour – the quick‑start I used on a trending repo."
+    ],
+    "hook_formula_ids": [
+      14,
+      12
+    ],
+    "visual": "GIF of terminal running the CLI, outputting headline and summary",
+    "needs": [
+      "Git installed",
+      "OpenRouter free key"
+    ],
+    "models_to_run": [
+      "openrouter:nvidia/nemotron-3.5-lightning:free"
+    ],
+    "topic_kind": "github_repo",
+    "heat": 58.9944005663589,
+    "heat_where": "GitHub trending x6",
+    "entities": [
+      "anthropics/skills",
+      "openmausbot",
+      "agent-browser",
+      "security-audit-skill",
+      "agent-desktop"
+    ],
+    "source_urls": [
+      "https://github.com/anthropics/skills",
+      "https://github.com/milind-soni/OpenMausBot",
+      "https://github.com/vercel-labs/agent-browser",
+      "https://github.com/cloudflare/security-audit-skill",
+      "https://github.com/vercel-labs/agent-desktop",
+      "https://github.com/mattpocock/skills"
+    ],
+    "evidence_titles": [
+      "anthropics/skills: Public repository for Agent Skills",
+      "milind-soni/OpenMausBot: Open-source Grok Bot alternative with a virtual machine that bots can use",
+      "vercel-labs/agent-browser: Browser automation CLI for AI agents",
+      "cloudflare/security-audit-skill: A coding-agent skill for multi-phase security audits with independently verif",
+      "vercel-labs/agent-desktop: Computer use CLI for AI agents",
+      "mattpocock/skills: Skills for Real Engineers. Straight from my .agents directory."
+    ],
+    "evidence": [
+      "[GitHub trending] anthropics/skills: Public repository for Agent Skills (+5,738 stars this week)",
+      "[GitHub trending] milind-soni/OpenMausBot: Open-source Grok Bot alternative with a virtual machine that bots can use (+9,257 stars this week)",
+      "[GitHub trending] vercel-labs/agent-browser: Browser automation CLI for AI agents (+4,183 stars this week)",
+      "[GitHub trending] cloudflare/security-audit-skill: A coding-agent skill for multi-phase security audits with independently verif (+11,507 stars this week)",
+      "[GitHub trending] vercel-labs/agent-desktop: Computer use CLI for AI agents (+7,772 stars this week)",
+      "[GitHub trending] mattpocock/skills: Skills for Real Engineers. Straight from my .agents directory. (+9,575 stars this week)"
+    ],
+    "handle_facts": "github.com/anthropics/skills: 193,454 stars, Python, Public repository for Agent Skills",
+    "check_before_posting": [],
+    "handle_type": "github_repo",
+    "handle": "anthropics/skills",
+    "est_cost": 0.0
+  },
+  "option": {
+    "short_title": "Meeting‑minutes generator powered by a Skill",
+    "what_it_is": "I wrapped the `docx‑edit` skill from anthropics/skills in a tiny Python CLI. The CLI streams a transcript (plain‑text) to a LLM, lets the skill format the output, and writes a polished .docx in under a second.",
+    "what_you_show": "A 45‑second screen‑recording: run `minutes.py meeting.txt` → a styled Meeting‑Minutes.docx appears. The video also shows the skill folder (SKILL.md + helper script) and the single API call to `openrouter:google/gemma-4-26b-it`.",
+    "why_hired": "Shows I can take a raw Skill repo, wire it to a cheap LLM, and ship a production‑ready utility in an hour – exactly the speed founders need for new internal tools.",
+    "twist": "The viral repo only shows the skill definition; I proved it can be turned into a zero‑setup CLI that any startup can drop into their workflow without writing a custom prompt chain.",
+    "title": "Demo‑app: CLI minutes generator",
+    "kind": "demo-app",
+    "inspired_by": "anthropics/skills (193 k stars) – the most‑starred AI‑agent repo this week",
+    "your_edge": "End‑to‑end product (CLI + .docx) + cost measurement ({{cost}}) + latency {{latency}} – the repo never ships a runnable app.",
+    "what_you_build": "Python CLI (`minutes.py`), a Skill folder (`docx_edit/`), a tiny wrapper that calls the LLM via OpenRouter.",
+    "post_shows": "video link, GitHub repo (public) with one‑click install instructions.",
+    "why_hiring_cares": "Fast prototyping, LLM‑skill integration, cost awareness, shipping a usable binary – all core to a founding engineer.",
+    "who_it_impresses": "CTOs looking for someone who can turn a research‑grade skill into a product feature in a day.",
+    "stand_out": "Most posts just repost the repo; I delivered a working tool that a startup could ship tomorrow.",
+    "minutes": 55,
+    "difficulty": "medium",
+    "difficulty_why": "needs skill‑folder wiring, docx generation, and a reliable API wrapper, but fits in a single afternoon.",
+    "steps_preview": [
+      "Clone anthropics/skills → copy `docx-edit` folder.",
+      "Write thin Python wrapper that loads SKILL.md and calls OpenRouter model.",
+      "Add `python-docx` to write the file.",
+      "Package as a pip‑installable CLI.",
+      "Record demo."
+    ],
+    "models_to_run": [
+      "openrouter:google/gemma-4-26b-a4b-it:free"
+    ],
+    "needs": [
+      "Python 3.10+, internet",
+      "OpenRouter API key"
+    ],
+    "risk": "Skill format is tuned for Claude; I had to adapt prompts for Gemma – may need minor prompt tweaks for edge cases.",
+    "hook": "I built a one‑click meeting‑minutes generator with the newly‑starred `anthropics/skills` repo – {{result}}.",
+    "check_before_posting": [
+      "\"Inspired by\" source not found in the research: anthropics/skills (193 k stars) – the most‑starred AI‑agent repo this week"
+    ],
+    "orig_pos": 1,
+    "est_cost": 0.0
+  },
+  "research": {
+    "query": "anthropics skills",
+    "videos": [
+      {
+        "title": "Anthropic Just Shipped Claude 2.0 (Master it in 17 minutes)",
+        "views": 946244,
+        "channel": "Jay E | RoboNuggets",
+        "age": "2w ago",
+        "url": "https://www.youtube.com/watch?v=yMnFHFf43Qg"
+      },
+      {
+        "title": "Anthropic Just DESTROYED the Reason You Pay for Claude",
+        "views": 378119,
+        "channel": "Corey McClain",
+        "age": "10d ago",
+        "url": "https://www.youtube.com/watch?v=r4IR5wit-YE"
+      },
+      {
+        "title": "How an Anthropic engineer uses Claude Docs",
+        "views": 185271,
+        "channel": "Claude",
+        "age": "3w ago",
+        "url": "https://www.youtube.com/watch?v=SkFmiMHDN38"
+      },
+      {
+        "title": "Anthropic just shared how they use Claude differently (Master it in 12 mins)",
+        "views": 183939,
+        "channel": "Jay E | RoboNuggets",
+        "age": "3w ago",
+        "url": "https://www.youtube.com/watch?v=NarezKh3w4o"
+      },
+      {
+        "title": "俗說 AI｜Skill 出來滿一年了還有人不會嗎？7 分鐘完全理解 Skill",
+        "views": 140847,
+        "channel": "維維 AI 技術工坊",
+        "age": "3w ago",
+        "url": "https://www.youtube.com/watch?v=s0jRepBGI6s"
+      },
+      {
+        "title": "Anthropic Built You a FREE AI Degree. Finish It Before 2027 (I Reviewed Every Course)",
+        "views": 118256,
+        "channel": "Hyperautomation Labs",
+        "age": "3w ago",
+        "url": "https://www.youtube.com/watch?v=9oX16NOHbMk"
+      },
+      {
+        "title": "The People Who Made Claude Don’t Use AI Agents. They Use This.",
+        "views": 103916,
+        "channel": "Make First Million - Badar Munir and AI Secret Side | By Bad",
+        "age": "12d ago",
+        "url": "https://www.youtube.com/watch?v=1wT7qk7i6W8"
+      },
+      {
+        "title": "Your Old Prompts Are Making Claude Worse - Lance Martin, Anthropic",
+        "views": 86630,
+        "channel": "AI Engineer",
+        "age": "5d ago",
+        "url": "https://www.youtube.com/watch?v=ys6YQ2yfBpM"
+      }
+    ],
+    "repos": [
+      {
+        "title": "wheresryan22/anatomy: An agent skill for creating detailed, interactive isometric illustrations of real-world machines and complex s",
+        "stars": 26861,
+        "url": "https://github.com/wheresryan22/anatomy"
+      },
+      {
+        "title": "heydamir/unslop: A Claude skill that turns vibecoded, AI-looking UI into a designed interface",
+        "stars": 14846,
+        "url": "https://github.com/heydamir/unslop"
+      },
+      {
+        "title": "rehan-remade/universal-modder: Point Claude at any game. Skills, tools and the fal MCP that let Claude Code mod almost any PC game you own: r",
+        "stars": 9634,
+        "url": "https://github.com/rehan-remade/universal-modder"
+      },
+      {
+        "title": "Jakeschincariol/replica-skill: Eleven free Claude skills that clone any app: reverse-engineer it, rebuild it, test it for bugs, then fix what",
+        "stars": 9039,
+        "url": "https://github.com/Jakeschincariol/replica-skill"
+      },
+      {
+        "title": "Jakeschincariol/day-trader-skill: 11 Claude skills for day trading: scan thousands of charts, track breaking news, time every entry and exit, an",
+        "stars": 7243,
+        "url": "https://github.com/Jakeschincariol/day-trader-skill"
+      },
+      {
+        "title": "patch-gg/pixelfx: 244 pixel art effects, every one a small piece of code. Plus a Claude Code skill to make your own.",
+        "stars": 7103,
+        "url": "https://github.com/patch-gg/pixelfx"
+      },
+      {
+        "title": "janestreet/agent_skills: Agent skills",
+        "stars": 6952,
+        "url": "https://github.com/janestreet/agent_skills"
+      },
+      {
+        "title": "alchaincyf/huashu-art-motion: 艺术动画skill：35种艺术风格、9种解说语法，用代码让画动起来。",
+        "stars": 6791,
+        "url": "https://github.com/alchaincyf/huashu-art-motion"
+      }
+    ],
+    "hn": [
+      {
+        "title": "“AI Skills” are worthless in 2026",
+        "points": 53,
+        "comments": 26,
+        "url": "https://news.ycombinator.com/item?id=50255346"
+      },
+      {
+        "title": "Ask HN: How do you evaluate the skills your AI agents use?",
+        "points": 23,
+        "comments": 6,
+        "url": "https://news.ycombinator.com/item?id=50426070"
+      },
+      {
+        "title": "Agent-Skills.market",
+        "points": 16,
+        "comments": 10,
+        "url": "https://news.ycombinator.com/item?id=50148882"
+      },
+      {
+        "title": "USB: A trust layer for AI skills and MCP servers",
+        "points": 11,
+        "comments": 3,
+        "url": "https://news.ycombinator.com/item?id=50432661"
+      },
+      {
+        "title": "Show HN: Apache 2.0 Registry to let agents share skills with each other",
+        "points": 9,
+        "comments": 5,
+        "url": "https://news.ycombinator.com/item?id=50303291"
+      },
+      {
+        "title": "I Just Deleted All My Agent Skills",
+        "points": 8,
+        "comments": 0,
+        "url": "https://news.ycombinator.com/item?id=50413912"
+      }
+    ],
+    "linkedin": [],
+    "x": [],
+    "docs": "GitHub - anthropics/skills: Public repository for Agent Skills · GitHub Skip to content You signed in with another tab or window. Reload to refresh your session. You signed out in another tab or window. Reload to refresh your session. You switched accounts on another tab or window. Reload to refresh your session. Dismiss alert {{ message }} main Branches Tags Go to file Code Open more actions menu Latest commit History 62 Commits 62 Commits Folders and files Name Name Last commit message Last commit date .claude-plugin .claude-plugin skills skills spec spec template template .gitignore .gitignore README.md README.md THIRD_PARTY_NOTICES.md THIRD_PARTY_NOTICES.md View all files Repository files navigation Note: This repository contains Anthropic's implementation of skills for Claude. For information about the Agent Skills standard, see agentskills.io . Skills Skills are folders of instructions, scripts, and resources that Claude loads dynamically to improve performance on specialized tasks. Skills teach Claude how to complete specific tasks in a repeatable way, whether that's creating documents with your company's brand guidelines, analyzing data using your organization's specific workflows, or automating personal tasks. For more information, check out: What are skills? Using skills in Claude How to create custom skills Equipping agents for the real world with Agent Skills About This Repository This repository contains skills that demonstrate what's possible with Claude's skills system. These skills range from creative applications (art, music, design) to technical tasks (testing web apps, MCP server generation) to enterprise workflows (communications, branding, etc.). Each skill is self-contained in its own folder with a SKILL.md file containing the instructions and metadata that Claude uses. Browse through these skills to get inspiration for your own skills or to understand different patterns and approaches. Many skills in this repo are open source (Apache 2.0). We've also included the document creation & editing skills that power Claude's document capabilities under the hood in the skills/docx , skills/pdf , skills/pptx , and skills/xlsx subfolders. These are also open source (Apache 2.0), and we wanted to share them with developers as a reference for more complex skills that are actively used in a production AI application. Disclaimer These skills are provided for demonstration and educational purposes only. While some of these capabilities may be available in Claude, the implementations and behaviors you receive from Claude may differ from what is shown in these skills. These skills are meant to illustrate patterns and possibilities. Always test skills thoroughly in your own environment before relying on them for critical tasks. Skill Sets ./skills : Skill examples for Creative & Design, Development & Technical, Enterprise & Communication, and Document Skills ./spec : The Agent Skills specification ./template : Skill template Try in Claude Code, Claude.ai, and the API Claude Code You can register this repository as a Claude Code Plugin marketplace by running the following command in Claude Code: /plugin marketplace add anthropics/skills Then, to install a specific set of skills: Select Browse and install plugins Select anthropic-agent-skills Select document-skills or example-skills Select Install now Alternatively, directly install either Plugin via: /plugin install document-skills@anthropic-agent-skills /plugin install example-skills@anthropic-agent-skills After installing the plugin, you can use the skill by just mentioning it. For instance, if you install the document-skills plugin from the marketplace, you can ask Claude Code to do something like: \"Use the PDF skill to extract the form fields from path/to/some-file.pdf \" Claude.ai These example skills are all already available to paid plans in Claude.ai. To use any skill from this repository or upload custom skills, follow the instructions in Using skills in Claude . Claude API You can use Anthropic's pre-built skills, and upload custom skills, via the Claude API. See the Skills API Quickstart for more. Creating a Basic Skill Skills are simple to create - just a folder with a SKILL.md file containing YAML frontmatter and instructions. You can use the template-skill in this repository as a starting point: --- name : my-skill-name description : A clear description of what this skill does and when to use it --- # My Skill Name [ Add your instructions here that Claude will follow when this skill is active ] ## Examples - Example usage 1 - Example usage 2 ## Guidelines - Guideline 1 - Guideline 2 The frontmatter requires only two fields: name - A unique identifier for your skill (lowercase, hyphens for spaces) description - A complete description of what the skill does and when to use it The markdown content below contains the instructions, examples, and guidelines that Claude will follow. For more details, see How to create custom skills . Partner Skills",
+    "docs_from": "official page https://github.com/anthropics/skills",
+    "web": [
+      {
+        "title": "Python Arena: learn Python in your browser",
+        "url": ""
+      },
+      {
+        "title": "All modules | Python Arena",
+        "url": ""
+      },
+      {
+        "title": "arena-py · PyPI",
+        "url": ""
+      },
+      {
+        "title": "About | Python Arena",
+        "url": ""
+      },
+      {
+        "title": "Python Library - ARENA Documentation",
+        "url": ""
+      },
+      {
+        "title": "Python Programs - ARENA Documentation",
+        "url": ""
+      }
+    ]
+  },
+  "evidence_pack": {
+    "facts": [
+      {
+        "fact": "Skills are folders of instructions, scripts, and resources that Claude loads dynamically to improve performance on specialized tasks.",
+        "source": "docs"
+      },
+      {
+        "fact": "Each skill lives in its own folder with a SKILL.md file that provides the instructions and metadata Claude uses.",
+        "source": "docs"
+      },
+      {
+        "fact": "The public anthropics/skills repository contains 62 commits.",
+        "source": "docs"
+      },
+      {
+        "fact": "Many of the skills in the repository are open‑source under the Apache 2.0 license.",
+        "source": "docs"
+      },
+      {
+        "fact": "The repo showcases skill types ranging from creative (art, music, design) to technical (testing web apps, MCP server generation) to enterprise (communications, branding).",
+        "source": "docs"
+      },
+      {
+        "fact": "Document creation & editing skills for docx, pdf, pptx, and xlsx are provided as open‑source examples.",
+        "source": "docs"
+      },
+      {
+        "fact": "Community‑built Claude skill anatomy (an agent skill for detailed, interactive isometric illustrations) has 26,861 GitHub stars.",
+        "source": "github"
+      },
+      {
+        "fact": "Community‑built Claude skill unslop (turns AI‑looking UI into a designed interface) has 14,846 GitHub stars.",
+        "source": "github"
+      },
+      {
+        "fact": "Hacker News thread “AI Skills” was rated 53 points with 26 comments, reflecting debate about skill value in 2026.",
+        "source": "hn"
+      },
+      {
+        "fact": "Hacker News Ask HN thread on evaluating AI agent skills received 23 points and 6 comments.",
+        "source": "hn"
+      }
+    ]
+  }
+}

@@ -1,0 +1,283 @@
+{
+  "name": "model-comparison",
+  "captured_at": "2026-11-12T15:48:36+00:00",
+  "idea": {
+    "topic_number": 2,
+    "title": "GPT‑6.1 Terra vs Top Agents",
+    "topic": "OpenAI launches GPT‑6.1 Terra",
+    "format": "face-off",
+    "short_title": "GPT‑6.1 Terra vs Top Agents",
+    "the_news": "OpenAI launched GPT‑6.1 Terra, touting stronger agent abilities and opened API access.",
+    "what_you_do": "I ran a 20‑task agent benchmark (code generation, web‑scraping, VM control) using GPT‑6.1 Terra, GPT‑6 Luna, GPT‑6 Sol, and Groq’s 120B OSS model.",
+    "post_shows": "Scoreboard {{result}} highlights where Terra shines, where it trips, plus latency and cost per task.",
+    "why_hired": "Demonstrates I can evaluate frontier models for production‑ready agents.",
+    "difficulty": "medium",
+    "why_hot": "Founders see I can vet the newest LLMs before they become mainstream.",
+    "role_angle": "I know how to benchmark and pick the right LLM for agent pipelines.",
+    "build_plan": "1. Grab OpenAI API key for Terra (beta). 2. Write Python harness that sends same prompt to each model. 3. Record success/failure, latency, token usage. 4. Summarize in a table and write post.",
+    "build_minutes": 90,
+    "hook_options": [
+      "I pitted GPT‑6.1 Terra against the best agents – the winner surprised me.",
+      "20 real‑world agent tasks: does Terra finally beat the competition?"
+    ],
+    "hook_formula_ids": [
+      2,
+      12
+    ],
+    "visual": "table comparing pass/fail, latency (s), $ per task for each model",
+    "needs": [
+      "OpenAI API access to GPT‑6.1 Terra (beta)",
+      "OpenAI credit, ~$5 for test runs"
+    ],
+    "models_to_run": [
+      "openai:gpt-6-luna",
+      "openai:gpt-6-sol",
+      "groq:openai/gpt-oss-120b"
+    ],
+    "topic_kind": "model",
+    "heat": 20.47158585597062,
+    "heat_where": "News x3 | Hacker News: 630 points, 425 comments",
+    "entities": [
+      "openai",
+      "gpt‑6.1‑terra",
+      "api"
+    ],
+    "source_urls": [
+      "https://openai.com/index/introducing-gpt-6-1-terra/",
+      "https://news.google.com/rss/articles/CBMiYEFVX3lxTE5FeXZFeG9pNFFNNEU4R0tGRjNFYnhBTWFFblE3Snp1MVJVVHJjSlQxb2s5S2FGZnRfNjlzUzkzN1JiZ2pUWl9oRTJlSl80Z0g2Zy1nekNzQ253NU13VE9zYw?oc=5",
+      "https://news.google.com/rss/articles/CBMihAFBVV95cUxNQVhZc0dfZzVfQ0VSWDM4QTFLLUFkYUZVRWtBMmlUSVUtaDZqQXdJNVZFWnhqVW1lWTc5UHZSNHFER3U2QlFaSGVNUHhnZy1KSFE3cTFwcGJSSDNYMnI4WHg2STNwSDIyUXBOTVZ0N0FscjFKNGhDZWdjaHZyaDkzVDhLT24?oc=5",
+      "https://news.google.com/rss/articles/CBMif0FVX3lxTE5EQVY3Q0FYVVg3MU1JeDdHREJsV1RqbTFIdG03VWN2NWhGdFNwczlRdkV5ME9FOWRnWmdxMHZFYXJTc0haNXg0RnRzSVhSMzhqVHNfVVZKWWNMNWQ1RDZkVFhpRWVCcVVzYWFlQ1k1b29USEIyVFRGTDlZbk9hUkU?oc=5"
+    ],
+    "evidence_titles": [
+      "GPT-6.1 Terra",
+      "Introducing GPT-6.1 Terra - OpenAI",
+      "OpenAI AI Agents Demonstrate VM Escapes and Secret Cross-Sandbox Communication - The Hacker News",
+      "Securing our frontier model training environment - OpenAI"
+    ],
+    "evidence": [
+      "[Hacker News] GPT-6.1 Terra (630 points, 425 comments)",
+      "[News] Introducing GPT-6.1 Terra - OpenAI (26 Oct)",
+      "[News] OpenAI AI Agents Demonstrate VM Escapes and Secret Cross-Sandbox Communication - The Hacker News (25 Oct)",
+      "[News] Securing our frontier model training environment - OpenAI (23 Oct)"
+    ],
+    "handle_facts": "",
+    "check_before_posting": [],
+    "handle_type": "model",
+    "handle": "gpt-6.1‑terra",
+    "est_cost": 0.1512
+  },
+  "option": {
+    "short_title": "One‑click UI mockup generator with GPT‑6.1 Terra",
+    "what_it_is": "A lightweight Next.js web app that accepts a hand‑drawn sketch, calls the Terra Agent API (openai:gpt‑6.1‑sol) to (1) interpret the sketch, (2) write a React component tree, and (3) serve a live preview. All code is generated on‑the‑fly and deployed to Vercel.",
+    "what_you_show": "A 45‑second screen‑recording: upload a doodle → React UI appears in seconds, plus a public GitHub repo link.",
+    "why_hired": "Shows I can take a brand‑new frontier model, turn it into a shipped product feature in an afternoon, and handle prompt‑engineering, API integration, and production deployment end‑to‑end.",
+    "twist": "Most viral demos stop at static images; I close the loop by producing runnable code and a live preview – exactly what a startup needs to ship.",
+    "title": "Demo‑App",
+    "kind": "demo-app",
+    "inspired_by": "YouTube video “GPT‑6.1 Terra is now in orbit” (531 k views)",
+    "your_edge": "Built the full UI pipeline, added error‑handling and a cost‑monitor, kept total API spend under $3.",
+    "what_you_build": "Next.js front‑end + tiny Python/Node shim that talks to Terra’s agent mode.",
+    "post_shows": "repo: https://github.com/{{github_username}}/terra‑ui‑generator",
+    "why_hiring_cares": "Speed of delivery, production‑grade integration, and cost awareness.",
+    "who_it_impresses": "Founders looking for engineers who can prototype and ship with the newest models fast.",
+    "stand_out": "Turns a hype‑driven image generation demo into a real, runnable product component.",
+    "minutes": 150,
+    "difficulty": "medium – wiring the agent, handling file I/O, and deploying.",
+    "difficulty_why": "Requires prompt‑engineering, API auth, and a small CI/CD pipeline.",
+    "steps_preview": [
+      "Create Next.js starter (30 min)",
+      "Write Terra‑agent wrapper (40 min)",
+      "Connect sketch → component generation (60 min)",
+      "Deploy to Vercel & test (20 min)"
+    ],
+    "models_to_run": [
+      "openai:gpt-6.1-sol"
+    ],
+    "needs": [
+      "OpenAI API key (paid tier)"
+    ],
+    "risk": "Paid API required; kept under $3 by limiting token usage.",
+    "hook": "I fed a hand‑drawn sketch to GPT‑6.1 Terra and got a live React UI in seconds – {{result}}",
+    "check_before_posting": [],
+    "orig_pos": 1,
+    "est_cost": 0.144
+  },
+  "research": {
+    "query": "gpt-6.1‑terra",
+    "videos": [
+      {
+        "title": "GPT-6.1 Terra is now in orbit",
+        "views": 531319,
+        "channel": "OpenAI",
+        "age": "2w ago",
+        "url": "https://www.youtube.com/watch?v=tTuk4pGnT0A"
+      },
+      {
+        "title": "GPT-6.1 Terra Built This Blender Ad From a Sketch",
+        "views": 292941,
+        "channel": "Kingy AI",
+        "age": "13d ago",
+        "url": "https://www.youtube.com/watch?v=xpHaYspK_e4"
+      },
+      {
+        "title": "HUGE GPT-6.5 LEAK! NEW Claude Fable 5.5, Gemini 4 Carbon, MiniMax M3.1 Flash & Kimi K3.1! AI NEWS",
+        "views": 169540,
+        "channel": "WorldofAI",
+        "age": "3w ago",
+        "url": "https://www.youtube.com/watch?v=2BXktpaCEN4"
+      },
+      {
+        "title": "HUGE ANTHROPIC BOMBSHELL! Claude REA UNBANNED?! GPT-6.1 Terra, Qwen 4 27B, & Fable 5.5! AI NEWS",
+        "views": 166960,
+        "channel": "WorldofAI",
+        "age": "2w ago",
+        "url": "https://www.youtube.com/watch?v=SyUjFWgqDNo"
+      },
+      {
+        "title": "OpenAI Made Vibe Coding Too Cheap It Feels Unfair",
+        "views": 99031,
+        "channel": "Nick Saraev",
+        "age": "12d ago",
+        "url": "https://www.youtube.com/watch?v=lPo36U3q3h0"
+      },
+      {
+        "title": "GPT-6.1 Terra Is HERE – Is THIS the FASTEST Model Yet?",
+        "views": 83731,
+        "channel": "Bijan Bowen",
+        "age": "2w ago",
+        "url": "https://www.youtube.com/watch?v=VHJfY-c7VkA"
+      },
+      {
+        "title": "🤖 THE BEST AIs CREATE TEARDOWN in GODOT! ChatGPT 6 Astra vs Claude Opus 5.5 vs GPT 6.1 Sol",
+        "views": 82995,
+        "channel": "промтович",
+        "age": "2w ago",
+        "url": "https://www.youtube.com/watch?v=tj2cEY9JAhQ"
+      },
+      {
+        "title": "OpenAI's New GPT-6.1 Terra Is WAY Better Than It Should Be (10x Cheaper, 3x Faster)",
+        "views": 75058,
+        "channel": "AI Revolution",
+        "age": "2w ago",
+        "url": "https://www.youtube.com/watch?v=l8JleC6D14Q"
+      }
+    ],
+    "repos": [
+      {
+        "title": "cheercheung/awesome-gpt-6-1-terra-guide-and-use-cases: Real GPT-6.1 Terra use cases: computer use, editing, visual coding, benchmarks and limits.",
+        "stars": 3,
+        "url": "https://github.com/cheercheung/awesome-gpt-6-1-terra-guide-and-use-cases"
+      },
+      {
+        "title": "MiaAI-Lab/GPT-6.1-Terra-100-HTML-files: A gallery of 100 self-contained HTML studies created with GPT-6.1-Terra",
+        "stars": 2,
+        "url": "https://github.com/MiaAI-Lab/GPT-6.1-Terra-100-HTML-files"
+      },
+      {
+        "title": "diegocp01/mona-lisa-svg-gpt-6.1-terra: 1 Shot prompt example to GPT-6.1 Terra Ultra",
+        "stars": 1,
+        "url": "https://github.com/diegocp01/mona-lisa-svg-gpt-6.1-terra"
+      },
+      {
+        "title": "morganlinton/vulcanbench-gpt61-terra-traces: GPT-6.1 Terra on VulcanBench Frontier v4: 115 redacted Codex CLI session traces (structure only, canary-marked",
+        "stars": 1,
+        "url": "https://github.com/morganlinton/vulcanbench-gpt61-terra-traces"
+      },
+      {
+        "title": "taswar/GPT-6-1-Terra-AgentFramework-CSharp-Sample: C# .NET 10 sample for GPT-6.1 Terra on Azure OpenAI in Microsoft Foundry using Microsoft Agent Framework: a PD",
+        "stars": 1,
+        "url": "https://github.com/taswar/GPT-6-1-Terra-AgentFramework-CSharp-Sample"
+      },
+      {
+        "title": "taswar/GPT-6-Luna-Csharp-Sample: C# .NET 10 sample for GPT-6 Luna on Azure OpenAI in Microsoft Foundry: high-volume ticket triage with strict s",
+        "stars": 1,
+        "url": "https://github.com/taswar/GPT-6-Luna-Csharp-Sample"
+      },
+      {
+        "title": "vnmoorthy/rescue-radar: Finds the people asking for rescue in the flood of disaster posts, in real time. NVIDIA Nemotron 3.5 Super + L",
+        "stars": 1,
+        "url": "https://github.com/vnmoorthy/rescue-radar"
+      },
+      {
+        "title": "taswar/GPT-6-1-Terra-CSharp-Sample: C# .NET 10 sample for GPT-6.1 Terra on Azure OpenAI in Microsoft Foundry, calling the Responses API with HttpC",
+        "stars": 1,
+        "url": "https://github.com/taswar/GPT-6-1-Terra-CSharp-Sample"
+      }
+    ],
+    "hn": [],
+    "linkedin": [],
+    "x": [],
+    "docs": "",
+    "docs_from": "",
+    "web": [
+      {
+        "title": "ChatGPT",
+        "url": ""
+      },
+      {
+        "title": "GPT-4 | OpenAI",
+        "url": ""
+      },
+      {
+        "title": "Introducing ChatGPT - OpenAI",
+        "url": ""
+      },
+      {
+        "title": "ChatGPT on the web | ChatGPT Learn",
+        "url": ""
+      },
+      {
+        "title": "ChatGPT",
+        "url": ""
+      },
+      {
+        "title": "ChatGPT",
+        "url": ""
+      }
+    ]
+  },
+  "evidence_pack": {
+    "facts": [
+      {
+        "fact": "GPT‑6.1 Terra is an OpenAI model highlighted in a YouTube video titled “GPT‑6.1 Terra is now in orbit” with 531,319 views.",
+        "source": "youtube"
+      },
+      {
+        "fact": "A YouTube video claims GPT‑6.1 Terra can generate a Blender advertisement from a sketch, garnering 292,941 views.",
+        "source": "youtube"
+      },
+      {
+        "fact": "Another video asks “Is THIS the FASTEST Model Yet?” about GPT‑6.1 Terra and has 83,731 views.",
+        "source": "youtube"
+      },
+      {
+        "fact": "A video promotes GPT‑6.1 Terra as “10x Cheaper, 3x Faster” with 75,058 views.",
+        "source": "youtube"
+      },
+      {
+        "fact": "The GitHub repo cheercheung/awesome‑gpt‑6‑1‑terra‑guide‑and‑use‑cases has 3 stars and lists use cases such as computer use, editing, visual coding, benchmarks and limits.",
+        "source": "github"
+      },
+      {
+        "fact": "The GitHub repo MiaAI‑Lab/GPT‑6.1‑Terra‑100‑HTML‑files has 2 stars and provides a gallery of 100 self‑contained HTML studies created with GPT‑6.1 Terra.",
+        "source": "github"
+      },
+      {
+        "fact": "The GitHub repo diegocp01/mona‑lisa‑svg‑gpt‑6.1‑terra has 1 star and contains a 1‑shot prompt example to GPT‑6.1 Terra Ultra.",
+        "source": "github"
+      },
+      {
+        "fact": "The GitHub repo taswar/GPT‑6‑1‑Terra‑AgentFramework‑CSharp‑Sample has 1 star and offers a C# .NET 10 sample for GPT‑6.1 Terra on Azure OpenAI in Microsoft Foundry using Microsoft Agent Framework.",
+        "source": "github"
+      },
+      {
+        "fact": "The GitHub repo taswar/GPT‑6‑1‑Terra‑CSharp‑Sample has 1 star and provides a C# .NET 10 sample for GPT‑6.1 Terra on Azure OpenAI in Microsoft Foundry, calling the Responses API with HttpC.",
+        "source": "github"
+      },
+      {
+        "fact": "No official documentation for GPT‑6.1 Terra is listed in the provided sources.",
+        "source": "docs"
+      }
+    ]
+  }
+}

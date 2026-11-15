@@ -9,7 +9,7 @@
   python -m postpilot status           show setup and recent batches
   python -m postpilot test-email       send yourself a test email
   python -m postpilot precommit        check files for secrets before you commit
-  python -m postpilot eval [N]         replay the last N saved runs and score idea quality
+  python -m postpilot eval run         score the current prompts on the golden stories (also: capture, replay, list, history)
   python -m postpilot doctor           show how many signals each live source returns now
 
   After you publish a post (track what actually brings recruiters and founders):
@@ -119,10 +119,23 @@ def main() -> None:
     sub.add_parser("test-email")
     pc = sub.add_parser("precommit")
     pc.add_argument("paths", nargs="*")
-    ev = sub.add_parser("eval")
-    ev.add_argument("n", nargs="?", type=int)
-    ev.add_argument("--builds", action="store_true",
-                    help="re-run saved stories through options, BUILD.md and post (GPT-6, max 60k tokens)")
+    ev = sub.add_parser("eval").add_subparsers(dest="eval_cmd", required=True)
+    er = ev.add_parser("run", help="score the current pipeline on the golden stories (free models)")
+    er.add_argument("--story", action="append", help="a golden story name (repeatable; default: all)")
+    er.add_argument("--max", type=int, default=3, help="most stories to run (default 3)")
+    er.add_argument("--no-fail", action="store_true", help="exit 0 even when the score drops")
+    ec = ev.add_parser("capture", help="save a story from a saved batch as a golden story")
+    ec.add_argument("batch", type=int)
+    ec.add_argument("idea", type=int)
+    ec.add_argument("option", type=int)
+    ec.add_argument("name")
+    ep = ev.add_parser("replay", help="re-score a saved run offline (no model calls)")
+    ep.add_argument("run_file", nargs="?", help="a file or name in evals/results (default: the last run)")
+    ev.add_parser("list", help="golden stories and their last scores")
+    el = ev.add_parser("live", help="signals from real use: pick rate, your ratings, model health, results")
+    el.add_argument("days", nargs="?", type=int, default=14)
+    eh = ev.add_parser("history", help="fact-check stats over the last N saved scouts")
+    eh.add_argument("n", nargs="?", type=int, default=3)
     sub.add_parser("doctor")
     po = sub.add_parser("posted")
     po.add_argument("batch", type=int)
@@ -169,10 +182,14 @@ def _run(args) -> None:
         from . import precommit
         sys.exit(precommit.run(args.paths or None))
     elif args.cmd == "eval":
-        if args.builds:
-            pipeline.eval_builds(args.n or 2)
+        if args.eval_cmd == "history":
+            pipeline.replay(args.n)
+        elif args.eval_cmd == "live":
+            from .evals import live
+            print(live.render(live.signals(args.days)))
         else:
-            pipeline.replay(args.n or 3)
+            from .evals import runner
+            sys.exit(runner.cli(args))
     elif args.cmd == "doctor":
         sys.exit(doctor())
     elif args.cmd == "posted":
