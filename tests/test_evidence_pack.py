@@ -58,13 +58,13 @@ def env(monkeypatch, tmp_path):
 
 
 def _plan_from(result: dict, with_pack: bool = True):
-    idea = pipeline._idea_from_option(IDEA, result["options"][0], result["research"],
+    idea = pipeline.idea_from_option(IDEA, result["options"][0], result["research"],
                                       result["evidence_pack"] if with_pack else None)
-    return pipeline._make_plan(idea)
+    return pipeline.make_plan(idea)
 
 
 def test_pack_is_built_once_and_reused(env):
-    result, _ = pipeline._make_options(IDEA)
+    result, _ = pipeline.make_options(IDEA)
     assert [f["fact"] for f in result["evidence_pack"]["facts"]] == [FACT]     # saved with the options
     _plan_from(result)
     assert len(env.prompts("scout")) == 1                  # the plan and the post did not rebuild it
@@ -74,7 +74,7 @@ def test_pack_is_built_once_and_reused(env):
 
 
 def test_prompts_use_the_pack_not_the_raw_digest(env):
-    result, _ = pipeline._make_options(IDEA)
+    result, _ = pipeline.make_options(IDEA)
     _plan_from(result)
     assert RAW_TITLE in env.prompts("scout")[0]            # only the extractor reads the raw research
     for role in ("options", "brief", "post"):
@@ -103,7 +103,7 @@ def test_pack_is_capped_and_rendered_deterministically(env):
 def test_falls_back_to_the_raw_digest_when_the_pack_fails(env, monkeypatch, fake, caplog):
     monkeypatch.setattr(brain.llm, "chat_json", fake.chat_json)
     with caplog.at_level("WARNING"):
-        result, _ = pipeline._make_options(IDEA)           # must not raise
+        result, _ = pipeline.make_options(IDEA)           # must not raise
     assert result["evidence_pack"] is None and result["options"]
     assert RAW_TITLE in fake.prompts("options")[0]         # old behaviour: the raw digest
     assert any("evidence pack" in r.message for r in caplog.records)
@@ -113,12 +113,12 @@ def test_falls_back_to_the_raw_digest_when_the_pack_fails(env, monkeypatch, fake
 
 
 def test_old_saved_ideas_without_a_pack_still_work(env):
-    result, _ = pipeline._make_options(IDEA)
+    result, _ = pipeline.make_options(IDEA)
     old_listing = {k: v for k, v in result.items() if k != "evidence_pack"}     # saved before this change
-    idea = pipeline._idea_from_option(IDEA, old_listing["options"][0], old_listing["research"],
+    idea = pipeline.idea_from_option(IDEA, old_listing["options"][0], old_listing["research"],
                                       old_listing.get("evidence_pack"))
     assert "evidence_pack" not in idea
-    plan = pipeline._make_plan(idea)
+    plan = pipeline.make_plan(idea)
     assert plan["doc"] and len(env.prompts("scout")) == 1
     assert RAW_TITLE in env.prompts("brief")[0] and FACT not in env.prompts("brief")[0]
 
@@ -131,8 +131,8 @@ def test_broken_saved_pack_falls_back(env):
 
 def test_fact_gate_still_reads_raw_titles(env, monkeypatch):
     # The gate is fed the saved raw titles, never the pack: a fact only the pack knows can't vouch for a claim.
-    result, _ = pipeline._make_options(IDEA)
-    idea = pipeline._idea_from_option(IDEA, result["options"][0], result["research"], result["evidence_pack"])
+    result, _ = pipeline.make_options(IDEA)
+    idea = pipeline.idea_from_option(IDEA, result["options"][0], result["research"], result["evidence_pack"])
     seen = {}
     real = pipeline.factgate.scan_text
 
@@ -140,5 +140,5 @@ def test_fact_gate_still_reads_raw_titles(env, monkeypatch):
         seen["titles"] = [s["title"] for s in signals]
         return real(texts, topic, signals, cat, runs)
     monkeypatch.setattr(pipeline.factgate, "scan_text", spy)
-    pipeline._make_plan(idea)
+    pipeline.make_plan(idea)
     assert seen["titles"] == IDEA["evidence"] and FACT not in seen["titles"]

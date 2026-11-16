@@ -330,7 +330,7 @@ def shortlist(cat: Catalog, focus_words: list[str], per_provider: int = 12) -> l
     for provider in ("groq", "cloudflare", "openrouter", "openai"):
         if not has_key(provider):
             continue
-        free = rank([m for m in cat.models if m.provider == provider and not m.paid])
+        free =rank([m for m in cat.models if m.provider == provider and not m.paid])
         paid = rank([m for m in cat.models if m.provider == provider and m.paid])
         out.extend(free if provider == "groq" else free[:per_provider])
         out.extend(paid[:per_provider])

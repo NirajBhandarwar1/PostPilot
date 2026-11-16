@@ -134,12 +134,12 @@ def _run_story(story: dict) -> dict:
         t0 = time.time()
         try:
             if stage == "options":
-                res, dropped = pipeline._make_options(idea)
+                res, dropped = pipeline.make_options(idea)
                 outputs["options"], outputs["dropped"] = res, dropped
             else:
-                picked = pipeline._idea_from_option(idea, story["option"], story.get("research"),
+                picked = pipeline.idea_from_option(idea, story["option"], story.get("research"),
                                                     story.get("evidence_pack"))
-                outputs["plan"] = _plain(pipeline._make_plan(picked))
+                outputs["plan"] = _plain(pipeline.make_plan(picked))
         except Exception as e:      # one failing stage must not hide the other one's result
             errors[stage] = f"{type(e).__name__}: {str(e)[:300]}"
         # Each stage resets llm.USAGE, so read it right after the stage.

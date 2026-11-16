@@ -23,10 +23,13 @@
 import argparse
 import json
 import logging
+import re
+import subprocess
 import sys
+from pathlib import Path
 
-from . import db, health, llm, mailer, pipeline
-from .config import settings
+from . import db, llm, mailer, pipeline, reports
+from .config import ROOT, settings
 
 
 def _setup_logging() -> None:
@@ -48,10 +51,10 @@ def status() -> None:
     print(f"Model          : {ok(bool(plist))}  " + (" -> ".join(f"{p.name}:{p.model}" for p in plist) or "set GROQ_API_KEY or OLLAMA_MODEL in .env"))
     print("Writer         : " + (" -> ".join(f"{p.name}:{p.model}" for p in writers) or "same as Model"))
     print(f"Paid tokens    : {llm.paid_tokens_today():,} used today of {llm.daily_cap():,} (OPENAI_DAILY_TOKENS)")
-    for line in health.quota_lines() or ["no free-tier use recorded today"]:
+    for line in llm.quota_lines() or ["no free-tier use recorded today"]:
         print(f"Free quota     : {line}")
     print(f"Gmail          : {ok(settings.has_email)}  ({settings.gmail_address or 'not set'})")
-    print(f"Voice profile  : {ok(bool(pipeline._voice()))}  ({settings.voice_file})")
+    print(f"Voice profile  : {ok(bool(pipeline.voice()))}  ({settings.voice_file})")
     print(f"Output folder  : {settings.output_dir}")
     print(f"Cycle          : every {settings.cycle_days:g} days, replies checked every {settings.check_minutes:g} min")
     print(f"Last scout     : {db.get_meta('last_scout_at', 'never')}")
@@ -95,6 +98,115 @@ def doctor() -> int:
 def _need_batch(batch_id: int):
     if not db.get_batch(batch_id):
         sys.exit(f"No batch #{batch_id}. See `python -m postpilot status`.")
+
+
+# ---------- secret check before you commit (was precommit.py) ----------
+# It refuses when a file is `.env`, contains one of the real secret values from `.env`, or contains
+# something shaped like an API key. Secret values are never printed. You run it by hand; nothing
+# commits for you.
+
+# Settings in .env that are configuration, not secrets. Their values (model names, provider
+# lists) legitimately appear in code and docs, so matching them would block every commit.
+NOT_SECRET = re.compile(
+    r"^(LLM_PROVIDERS|WRITER_PROVIDERS|(?:SCOUT|IDEAS|OPTIONS|BRIEF|POST)_PROVIDERS|\w+_MODEL|(?:\w+_)?REASONING_EFFORT|USER_SETUP|CURRENT_MODELS|CYCLE_DAYS|"
+    r"CHECK_MINUTES|RADAR_DAYS|OUTPUT_DIR|VOICE_FILE|OLLAMA_URL|CUSTOM_BASE_URL|CUSTOM_STRICT|"
+    r"OPENAI_DAILY_TOKENS|CLOUDFLARE_DAILY_NEURONS|GROQ_DAILY_TOKENS|PAID_EXPERIMENTS)$")
+
+# Known key shapes: a prefix plus a long run of key characters (bare prefixes like "sk-" or
+# "hf_" would also match ordinary words such as "risk-" or "hf_api").
+KEY_SHAPES = re.compile(
+    r"(sk-or-v1-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}"
+    r"|hf_[A-Za-z0-9]{20,}|cfut_[A-Za-z0-9_]{20,})")
+
+SKIP_DIRS = {".venv", ".git", "data", ".gstack", "__pycache__"}
+
+
+def secret_values(env_path: Path) -> dict[str, str]:
+    """Name -> value for every .env entry that is a secret (6+ characters)."""
+    out: dict[str, str] = {}
+    if not env_path.exists():
+        return out
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        name, value = name.strip(), value.split(" #")[0].strip().strip('"').strip("'")
+        if len(value) >= 6 and not NOT_SECRET.match(name):
+            out[name] = value
+    return out
+
+
+def staged_files(root: Path) -> list[Path] | None:
+    """Files staged in git, or None when the folder is not a git repo yet."""
+    try:
+        res = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root,
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if res.returncode != 0:
+        return None
+    return [root / p for p in res.stdout.splitlines() if p.strip()]
+
+
+def _ignored_names(root: Path) -> set[str]:
+    """Plain names from .gitignore (e.g. `.env`, `data/`), which git would never stage."""
+    gi = root / ".gitignore"
+    if not gi.exists():
+        return set()
+    names = set()
+    for line in gi.read_text(encoding="utf-8").splitlines():
+        line = line.strip().rstrip("/")
+        if line and not line.startswith("#") and "*" not in line:
+            names.add(line)
+    return names
+
+
+def project_files(root: Path) -> list[Path]:
+    """Every file `git add .` would pick up (no git repo yet), so the check is still useful."""
+    skip = SKIP_DIRS | _ignored_names(root)
+    return [p for p in root.rglob("*")
+            if p.is_file() and not (set(p.relative_to(root).parts) & skip)
+            and not p.name.endswith((".pyc",))]
+
+
+def scan_for_secrets(files: list[Path], secrets: dict[str, str]) -> list[str]:
+    """Problems found, described without ever showing a secret value."""
+    problems = []
+    for f in files:
+        if f.name == ".env":
+            problems.append(f"{f}: the .env file itself must never be committed")
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for name, value in secrets.items():
+            if value in text:
+                problems.append(f"{f}: contains the value of {name} from .env")
+        m = KEY_SHAPES.search(text)
+        if m:
+            line_no = text.count("\n", 0, m.start()) + 1
+            problems.append(f"{f}:{line_no}: something shaped like an API key ({m.group(0)[:6]}...)")
+    return problems
+
+
+def precommit(paths: list[str] | None = None, root: Path = ROOT) -> int:
+    secrets = secret_values(root / ".env")
+    if paths:
+        files, where = [Path(p).resolve() for p in paths], "the given files"
+    else:
+        staged = staged_files(root)
+        files, where = (staged, "staged files") if staged is not None else (project_files(root), "all project files (no git repo yet)")
+    problems = scan_for_secrets(files, secrets)
+    print(f"Checked {len(files)} {where} against {len(secrets)} secret values from .env")
+    if problems:
+        print("BLOCKED. Do not commit until these are fixed:")
+        for p in problems:
+            print("  -", p)
+        return 1
+    print("OK: no secrets found.")
+    return 0
 
 
 def main() -> None:
@@ -179,11 +291,10 @@ def _run(args) -> None:
     elif args.cmd == "status":
         status()
     elif args.cmd == "precommit":
-        from . import precommit
-        sys.exit(precommit.run(args.paths or None))
+        sys.exit(precommit(args.paths or None))
     elif args.cmd == "eval":
         if args.eval_cmd == "history":
-            pipeline.replay(args.n)
+            reports.replay(args.n)
         elif args.eval_cmd == "live":
             from .evals import live
             print(live.render(live.signals(args.days)))
@@ -217,7 +328,7 @@ def _run(args) -> None:
         db.set_meta("baseline", json.dumps(base))
         print(f"Baseline saved: {base}")
     elif args.cmd == "report":
-        pipeline.report()
+        reports.report()
     elif args.cmd == "test-email":
         if not settings.has_email:
             sys.exit("Set GMAIL_ADDRESS and GMAIL_APP_PASSWORD in .env first.")

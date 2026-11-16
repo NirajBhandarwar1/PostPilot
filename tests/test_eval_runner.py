@@ -40,9 +40,9 @@ def fake_pipeline(monkeypatch):
         llm.USAGE["cloudflare:m"] = {"calls": 2, "in": 200, "out": 80}
         return _plan()
 
-    monkeypatch.setattr(pipeline, "_make_options", make_options)
-    monkeypatch.setattr(pipeline, "_make_plan", make_plan)
-    monkeypatch.setattr(pipeline, "_idea_from_option", lambda idea, o, research=None, pack=None: {**idea, "o": o})
+    monkeypatch.setattr(pipeline, "make_options", make_options)
+    monkeypatch.setattr(pipeline, "make_plan", make_plan)
+    monkeypatch.setattr(pipeline, "idea_from_option", lambda idea, o, research=None, pack=None: {**idea, "o": o})
     return seen
 
 
@@ -116,7 +116,7 @@ def test_a_crashed_stage_is_recorded_and_costs_points(folders, monkeypatch, fake
 
     def boom(idea):
         raise RuntimeError("provider exploded")
-    monkeypatch.setattr(pipeline, "_make_options", boom)
+    monkeypatch.setattr(pipeline, "make_options", boom)
     run = runner.run_eval(stories=[_story()])
     s = run["stories"]["one"]
     assert "options" in s["errors"] and "plan" not in s["errors"]
@@ -126,7 +126,7 @@ def test_a_crashed_stage_is_recorded_and_costs_points(folders, monkeypatch, fake
 def test_an_empty_provider_stops_the_run_early(folders, monkeypatch, fake_pipeline, capsys):
     def empty(idea):
         raise RuntimeError("cloudflare: no credit (used up your daily free allocation)")
-    monkeypatch.setattr(pipeline, "_make_options", empty)
+    monkeypatch.setattr(pipeline, "make_options", empty)
     run = runner.run_eval(stories=[_story("a"), _story("b"), _story("c")])
     assert list(run["stories"]) == ["a"] and run["skipped"] == ["b", "c"]
     assert fake_pipeline["plan"] == 0                       # the next stage did not run on an empty provider
@@ -184,8 +184,8 @@ def test_exit_code_fails_on_a_real_regression_or_a_big_drop():
 def test_replay_scores_stored_outputs_again_without_a_model_call(folders, fake_pipeline, monkeypatch, capsys):
     runner.save_run(runner.run_eval(stories=[_story()]))
     calls = dict(fake_pipeline)
-    monkeypatch.setattr(pipeline, "_make_options", lambda idea: pytest.fail("replay called a model"))
-    monkeypatch.setattr(pipeline, "_make_plan", lambda *a, **k: pytest.fail("replay called a model"))
+    monkeypatch.setattr(pipeline, "make_options", lambda idea: pytest.fail("replay called a model"))
+    monkeypatch.setattr(pipeline, "make_plan", lambda *a, **k: pytest.fail("replay called a model"))
     new = runner.replay()
     assert fake_pipeline == calls and new["overall"] > 80
     assert "vs previous run: overall +0.0" in capsys.readouterr().out
@@ -215,7 +215,7 @@ def test_cli_incomplete_run_is_reported_but_not_saved_or_compared(folders, fake_
     runner.GOLDEN_DIR.mkdir(parents=True)
     (runner.GOLDEN_DIR / "one.json").write_text(json.dumps(_story()), encoding="utf-8")
     assert runner.cli(_args()) == 0                               # a normal first run: saved
-    monkeypatch.setattr(pipeline, "_make_options", lambda idea: (_ for _ in ()).throw(RuntimeError("no credit")))
+    monkeypatch.setattr(pipeline, "make_options", lambda idea: (_ for _ in ()).throw(RuntimeError("no credit")))
     assert runner.cli(_args()) == 3
     assert "Incomplete" in capsys.readouterr().out
     assert len(list(runner.RESULTS_DIR.glob("*.json"))) == 1      # still only the first run
@@ -243,4 +243,5 @@ def test_real_golden_stories_are_valid_and_clean():
         assert {"name", "idea", "option"} <= set(s) and s["idea"].get("title") and s["option"].get("title")
         dumped = json.dumps(s)
         assert not any(p.search(dumped) for p in runner.SECRETS)
+
 

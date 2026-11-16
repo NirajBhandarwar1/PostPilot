@@ -2,7 +2,7 @@
 
           sources.collect()                         ~130 live signals
                  │
-          brain.find_topics()  ─► _heat() ─► filter_links / dedupe / history ─► chosen[≤3]
+          brain.find_topics()  ─► ranking.heat() ─► filter_links / dedupe / history ─► chosen[≤3]
                  │                                                             │
    factgate.load_catalogs() ─► shortlist ─► model ids ─► brain.make_ideas(chosen, ids)
                                                                 │
@@ -14,13 +14,12 @@
 
 import json
 import logging
-import math
 import re
 import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from . import brain, db, factgate, health, llm, mailer, sources
+from . import brain, db, factgate, llm, mailer, ranking, sources
 from .config import ROOT, settings
 from .render import (
     CURSOR_PROMPT,
@@ -41,7 +40,7 @@ HOOKS = json.loads((ROOT / "postpilot" / "vendor" / "hooks.json").read_text(enco
 LEXICON = humanizer.load_lexicon()
 
 
-def _voice() -> str:
+def voice() -> str:
     try:
         text = settings.voice_file.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -98,11 +97,6 @@ def _already_used(topic: dict | str, history: list) -> bool:
     return False
 
 
-MODEL_SCORE_CAP = 15.0   # the model's own opinion (relevance + buzz) can add at most this
-# Stories you can get your hands on beat news-only ones (the user's rule: test it, build with it).
-HANDLE_BONUS = {"model": 8.0, "github_repo": 8.0, "product": 5.0, "paper": 4.0}
-
-
 def _model_notes(cat: factgate.Catalog, keys: list[str]) -> dict:
     """How each offered model is shown to the writer: NEW tag and price."""
     by_key, out = cat.by_key(), {}
@@ -130,41 +124,6 @@ def _check_handle(t: dict, gh_lookup) -> None:
     t["handle"] = info["full_name"]
     t["handle_facts"] = (f"github.com/{info['full_name']}: {info.get('stars', 0):,} stars, "
                          f"{info.get('language') or 'unknown language'}, {info.get('description') or ''}")[:300]
-
-
-def _heat(topic: dict, signals: list[dict], ids: list[int] | None = None) -> tuple[float, str]:
-    """Measured attention only: upvotes, curated front pages, trending ranks, capped coverage.
-    `ids` should be the sources that really name the story (link_ids)."""
-    ids = topic["signal_ids"] if ids is None else ids
-    hits = [signals[i] for i in ids if 0 <= i < len(signals)]
-    kinds: dict[str, list[dict]] = {}
-    for h in hits:
-        kinds.setdefault(h["kind"], []).append(h)
-    # Real attention beats article counts: upvotes, curated front pages, trending ranks.
-    score = 3.0 * len(kinds)                                   # seen in many places = viral
-    news_pts = 0.0
-    for h in hits:
-        kind, rank, eng = h["kind"], h["rank"], h.get("engagement", 0) or 0
-        if kind.startswith("Hacker News"):
-            pts = min(20.0, 4 * math.log2(eng / 100 + 1)) if eng else 3.0   # 959 -> ~14, 2293 -> ~18
-        elif kind == "Techmeme":
-            pts = 6.0 if rank < 5 else 4.0                   # curated by the industry itself
-        elif kind == "Reddit":
-            pts = 4.0 if rank < 3 else 2.0
-        elif kind == "GitHub trending":
-            pts = min(15.0, 3 * math.log2(eng / 1000 + 1)) if eng else 1.0   # 5k -> ~8, 30k+ -> 15
-        elif kind.startswith("Hugging Face"):
-            pts = 5.0 if rank < 3 else 3.0 if rank < 10 else 1.5
-        else:                                                # plain news coverage
-            news_pts += 1.0
-            continue
-        score += pts
-    score += min(news_pts, 8)                                # coverage helps, but is capped
-    parts = []
-    for kind, hs in sorted(kinds.items(), key=lambda kv: -len(kv[1])):
-        best = min(hs, key=lambda h: h["rank"])
-        parts.append(f"{kind} x{len(hs)}" if len(hs) > 1 else f"{kind}: {best['detail']}")
-    return score, " | ".join(parts)
 
 
 def _hf_names(signals: list[dict]) -> list[str]:
@@ -196,14 +155,14 @@ def generate_batch(signals: list[dict], history: list, voice: str, cat: factgate
     topics = [t.model_dump() for t in brain.find_topics(signals).topics]
     for t in topics:
         t["link_ids"] = factgate.filter_links(t, signals)   # sources that really name the topic
-        t["heat"], t["heat_where"] = _heat(t, signals, t["link_ids"])
+        t["heat"], t["heat_where"] = ranking.heat(t, signals, t["link_ids"])
         t["evidence"] = [f"[{signals[i]['kind']}] {signals[i]['title']} ({signals[i]['detail']})"
                          for i in t["link_ids"][:6]]
     # Measured heat leads; the model's opinion (builder relevance, buzz) is capped (eng review O3).
     for t in topics:
         _check_handle(t, gh_lookup)
-        t["score"] = (t["heat"] + min(MODEL_SCORE_CAP, t.get("builder_relevance", 5) + 0.5 * t.get("buzz", 5))
-                      + HANDLE_BONUS.get(t.get("handle_type", "news"), 0.0))
+        t["score"] = (t["heat"] + min(ranking.MODEL_SCORE_CAP, t.get("builder_relevance", 5) + 0.5 * t.get("buzz", 5))
+                      + ranking.HANDLE_BONUS.get(t.get("handle_type", "news"), 0.0))
     topics.sort(key=lambda t: -t["score"])
     for t in topics:
         log.info("topic %-55s heat %4.0f buzz %2d links %d  %s", t["name"][:55], t["heat"],
@@ -323,7 +282,7 @@ def scout(send_email: bool = True) -> int | None:
              len(cat.models), cat.unavailable or "none", cat.from_cache or "none")
     history = _history()
     run_path = save_run(signals, history, cat)
-    batch = generate_batch(signals, history, _voice(), cat, hf_lookup=factgate.hf_model,
+    batch = generate_batch(signals, history, voice(), cat, hf_lookup=factgate.hf_model,
                            gh_lookup=factgate.github_repo)
     db.set_meta("last_scout_at", db.now_iso())
     if batch:
@@ -332,7 +291,7 @@ def scout(send_email: bool = True) -> int | None:
         run_path.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
     if not batch or not batch["ideas"]:
         log.warning("no ideas passed this run; nothing saved or sent")
-        health.log_health(batch["stats"] if batch else {"pitched": 0, "dropped": 0})
+        llm.log_health(batch["stats"] if batch else {"pitched": 0, "dropped": 0})
         return None
 
     batch_id = db.add_batch(batch, status="draft")
@@ -343,7 +302,7 @@ def scout(send_email: bool = True) -> int | None:
              batch_id, st["pitched"], st["failed_first"], st["regenerated"], st["dropped"], st["unverified"])
     for model, u in llm.USAGE.items():
         log.info("tokens %s: %d calls, %d in, %d out", model, u["calls"], u["in"], u["out"])
-    health.log_health(st)
+    llm.log_health(st)
 
     if send_email and settings.has_email:
         _send_ideas(batch_id, text)
@@ -477,7 +436,7 @@ def build(batch_id: int, choice: int, send_email: bool = True, option: int | Non
             raise ValueError(f"Idea {choice} of batch #{batch_id} has no option {option} "
                              f"(run: python -m postpilot options {batch_id} {choice})")
         kind = opts[option - 1].get("kind", "")
-        idea = _idea_from_option(idea, opts[option - 1], listing.get("research"), listing.get("evidence_pack"))
+        idea = idea_from_option(idea, opts[option - 1], listing.get("research"), listing.get("evidence_pack"))
     saved = _saved_build(data, choice, option, tag) if reuse else None
     if saved:
         out = Path(saved["build_dir"])
@@ -491,7 +450,7 @@ def build(batch_id: int, choice: int, send_email: bool = True, option: int | Non
 
     # The number this build will get, for the "After you post" commands in Part B.
     predicted = len(data.get("builds", [])) + 1
-    plan = _make_plan(idea, batch_id=batch_id, build_no=predicted)
+    plan = make_plan(idea, batch_id=batch_id, build_no=predicted)
     kit, doc = plan["kit"], plan["doc"]
     out = _build_dir(batch_id, choice, option, tag, idea["title"])
     for w in plan["warnings"]:
@@ -514,7 +473,7 @@ def build(batch_id: int, choice: int, send_email: bool = True, option: int | Non
     return out
 
 
-def _make_plan(idea: dict, batch_id: int | None = None, build_no: int | None = None) -> dict:
+def make_plan(idea: dict, batch_id: int | None = None, build_no: int | None = None) -> dict:
     """Write the BUILD.md plan and post for one idea (or picked option). No saving, no email:
     build() and the eval both use this, so the eval measures exactly what you would get."""
     llm.reset_usage()                       # so the plan can say which model wrote it
@@ -623,7 +582,7 @@ def _write_post(idea: dict, plan: str = ""):
     text, and the loop stops after the first rewrite that does not beat it (no wasted tokens)."""
     best, feedback, previous, facts = None, "", "", _facts(idea)
     for attempt in range(POST_TRIES):
-        kit = brain.build_post(idea, _voice(), HOOKS, feedback=feedback, plan=plan, facts=facts,
+        kit = brain.build_post(idea, voice(), HOOKS, feedback=feedback, plan=plan, facts=facts,
                                previous=previous)
         clean, report = humanizer.humanize(kit.post_draft, LEXICON)
         before, after = _score(kit.post_draft), _score(clean)
@@ -652,7 +611,7 @@ def _write_post(idea: dict, plan: str = ""):
 
 # ---------- step 2b: build options for the picked idea ----------
 
-def _idea_from_option(idea: dict, o: dict, research: dict | None = None, pack: dict | None = None) -> dict:
+def idea_from_option(idea: dict, o: dict, research: dict | None = None, pack: dict | None = None) -> dict:
     """The picked option replaces the rough plan; topic, sources and checks stay."""
     return {**idea, **({"evidence_pack": pack} if pack else {}),
             "title": o["title"], "format": o["kind"], "role_angle": o["why_hiring_cares"],
@@ -732,7 +691,7 @@ def propose(batch_id: int, choice: int, send_email: bool = True, fresh: bool = F
     if fresh:
         _next_tag(existing)                  # refuse past 'z' before paying for a list
     log.info("options for #%d idea %d: %s", batch_id, choice, idea["title"])
-    result, _ = _make_options(idea)
+    result, _ = make_options(idea)
     if reply_id:
         result["from_reply"] = reply_id
 
@@ -752,7 +711,7 @@ def propose(batch_id: int, choice: int, send_email: bool = True, fresh: bool = F
     return result
 
 
-def _make_options(idea: dict) -> tuple[dict, list[str]]:
+def make_options(idea: dict) -> tuple[dict, list[str]]:
     """Research the hot thing and write 3-5 fact-checked, priced build options for it.
     No saving, no email: propose() and the eval both use this. Returns (result, dropped)."""
     llm.reset_usage()
@@ -778,7 +737,7 @@ def _make_options(idea: dict) -> tuple[dict, list[str]]:
     dropped: list = []
     extra = ""
     for _attempt in range(2):     # one retry if too few options pass, or no "look what I built" demo
-        raw = brain.make_options(idea, _voice(), keys, notes, research_text=digest, extra=extra).model_dump()
+        raw = brain.make_options(idea, voice(), keys, notes, research_text=digest, extra=extra).model_dump()
         kept, dropped = [], []
         for pos, o in enumerate(raw["options"], 1):
             v = _check_option(o, idea, cat)
@@ -947,109 +906,3 @@ def run_forever() -> None:
         except Exception:
             log.exception("reply check failed")
         time.sleep(settings.check_minutes * 60)
-
-
-# ---------- replay eval (D10; folded in from evaluate.py per eng review D2) ----------
-
-def replay(n: int = 3) -> dict:
-    """Re-run topic finding + idea writing + the fact gate on the last N saved runs, using each
-    run's saved catalog so numbers stay comparable. Calls the real writer models."""
-    runs = sorted((settings.data_dir / "runs").glob("*.json"))[-n:]
-    if not runs:
-        print("No saved runs yet. Run `python -m postpilot scout --no-email` first.")
-        return {}
-    llm.reset_usage()
-    keys = ("pitched", "failed_first", "regenerated", "dropped", "unverified")
-    total: dict[str, float] = {"runs": 0, **dict.fromkeys(keys, 0)}
-    print(f"{'run':24} {'pitched':>7} {'failed':>6} {'regen':>5} {'dropped':>7} {'unverif':>7}")
-    for path in runs:
-        snap = json.loads(path.read_text(encoding="utf-8"))
-        cat = factgate.Catalog.from_json(snap["catalog"])
-        try:
-            batch = generate_batch(snap["signals"], snap.get("history", []), _voice(), cat)
-        except Exception as e:
-            print(f"{path.stem:24} ERROR {e}")
-            continue
-        st = (batch or {}).get("stats") or dict.fromkeys(keys, 0)
-        print(f"{path.stem:24} {st['pitched']:>7} {st['failed_first']:>6} {st['regenerated']:>5} "
-              f"{st['dropped']:>7} {st['unverified']:>7}")
-        total["runs"] += 1
-        for k in keys:
-            total[k] += st.get(k, 0)
-    if total["pitched"]:
-        total["failure_rate"] = 100 * total["failed_first"] / total["pitched"]
-        total["unverified_per_idea"] = total["unverified"] / total["pitched"]
-        print(f"\nPre-gate failure rate: {total['failure_rate']:.0f}% ({total['failed_first']}/"
-              f"{total['pitched']} ideas failed the fact check before it filtered them). Target: under 20%.")
-        print(f"Unverified claims per idea: {total['unverified_per_idea']:.1f}. "
-              f"Dropped after retry: {total['dropped']}.")
-    for model, u in llm.USAGE.items():
-        print(f"tokens {model}: {u['calls']} calls, {u['in']} in, {u['out']} out")
-    return total
-
-
-# ---------- outcomes: what your posts actually did (eng review O2) ----------
-
-def _built_item(batch, build_no: int) -> tuple[dict, str]:
-    """(idea, what was built) for one outcome row: the built option's type when the build came
-    from an options email, else the idea's own format. build_no 0 = an old batch's chosen idea."""
-    data = json.loads(batch["ideas_json"]) if batch else {}
-    ideas, builds = data.get("ideas", []), data.get("builds", [])
-    if build_no and 1 <= build_no <= len(builds):
-        rec = builds[build_no - 1]
-        idea = ideas[rec["idea"] - 1] if 1 <= rec["idea"] <= len(ideas) else {}
-        if rec.get("kind"):                  # saved at build time, so a later fresh list can't change it
-            return idea, rec["kind"]
-        listing = (data.get("options") or {}).get(str(rec["idea"]), {})
-        opts = listing.get("options", []) if listing.get("tag", "") == rec.get("tag", "") else []
-        if rec.get("option") and 1 <= rec["option"] <= len(opts):
-            return idea, opts[rec["option"] - 1].get("kind", "?")
-        return idea, idea.get("format", "?")
-    chosen = batch["chosen"] if batch else None
-    idea = ideas[chosen - 1] if chosen and 1 <= chosen <= len(ideas) else {}
-    return idea, idea.get("format", "?")
-
-
-def report() -> dict:
-    """Rank what you built (option type) and topic kinds by inbound (recruiters + founders +
-    other) per post. Each post is credited to the exact build you posted (D20)."""
-    rows = db.all_outcomes()
-    posted = [r for r in rows if r["posted_url"]]
-    if not posted:
-        print("No posts logged yet. After posting: python -m postpilot posted <batch> <linkedin-url>")
-        return {}
-    by: dict[str, dict[str, dict[str, int]]] = {"built": {}, "topic kind": {}}
-    total_in = 0
-    print(f"{'post':>8}  {'inbound':>7}  {'recr':>4} {'fndr':>4} {'othr':>4}  built / topic")
-    for r in posted:
-        batch = db.get_batch(r["batch_id"])
-        idea, built = _built_item(batch, r["build_no"])
-        inbound = (r["recruiters"] or 0) + (r["founders"] or 0) + (r["other"] or 0)
-        total_in += inbound
-        kind = idea.get("topic_kind", "?") or "?"
-        for dim, key in (("built", built), ("topic kind", kind)):
-            agg = by[dim].setdefault(key, {"posts": 0, "inbound": 0})
-            agg["posts"] += 1
-            agg["inbound"] += inbound
-        label = f"#{r['batch_id']}" + (f".b{r['build_no']}" if r["build_no"] else "")
-        print(f"{label:>8}  {inbound:>7}  {r['recruiters'] or 0:>4} {r['founders'] or 0:>4} "
-              f"{r['other'] or 0:>4}  {built} / {idea.get('topic', '?')[:50]}")
-    print(f"\nTotal: {len(posted)} posts, {total_in} inbound ({total_in / len(posted):.1f} per post)")
-    for dim, groups in by.items():
-        print(f"\nBy {dim} (inbound per post):")
-        for key, agg in sorted(groups.items(), key=lambda kv: -kv[1]["inbound"] / kv[1]["posts"]):
-            print(f"  {key:22} {agg['inbound'] / agg['posts']:5.1f}  ({agg['posts']} posts)")
-    baseline = json.loads(db.get_meta("baseline", "{}") or "{}")
-    if baseline:
-        print(f"\nBaseline before posting: {baseline}")
-    ratings = [json.loads(v) for k, v in _meta_items("ratings:")]
-    if ratings:
-        flat = [x for r in ratings for x in r]
-        print(f"Your idea ratings: {len(ratings)} batches rated, average {sum(flat) / len(flat):.1f}/5")
-    return {"posts": len(posted), "inbound": total_in, "by": by}
-
-
-def _meta_items(prefix: str) -> list[tuple[str, str]]:
-    with db.connect() as c:
-        return [(r["key"], r["value"]) for r in
-                c.execute("SELECT key, value FROM meta WHERE key LIKE ?", (prefix + "%",)).fetchall()]

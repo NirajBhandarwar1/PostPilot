@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from postpilot import brain, db, llm, mailer, pipeline, render, sources
+from postpilot import brain, db, llm, mailer, pipeline, render, reports, sources
 from tests.test_options import IDEA, env, fake_brief, option  # noqa: F401  (env is a fixture)
 from tests.test_state_and_safety import _batch, _kit, builder  # noqa: F401  (builder is a fixture)
 
@@ -343,7 +343,7 @@ def test_fresh_list_pick_builds_the_new_option_not_the_old_plan(builder, monkeyp
     builds = json.loads(db.get_batch(bid)["ideas_json"])["builds"]
     assert builder["brief"] == 2 and builds[-1]["title"].endswith("New demo") and builds[-1]["tag"] == "b"
     assert builds[0]["build_dir"] != builds[1]["build_dir"]                 # no folder is overwritten
-    assert pipeline._built_item(db.get_batch(bid), 1)[1] == "demo-app"     # kind saved with the build
+    assert reports._built_item(db.get_batch(bid), 1)[1] == "demo-app"     # kind saved with the build
 
 
 def test_lookalike_and_injected_dkim_results_are_rejected():
@@ -516,7 +516,7 @@ def test_budget_is_checked_before_every_attempt_and_free_models_are_skipped(monk
     monkeypatch.setattr(llm, "providers", lambda role="default": [paid, free])
     calls = []
 
-    def post(p, body, timeout=600, **_):
+    def post(p, body, timeout=600):
         calls.append(p.name)
         return {"usage": {"prompt_tokens": 600, "completion_tokens": 0},
                 "choices": [{"finish_reason": "stop", "message": {"content": "not json"}}]}

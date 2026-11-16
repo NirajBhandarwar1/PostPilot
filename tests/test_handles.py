@@ -3,7 +3,7 @@
 import json
 
 from postpilot import factgate as fg
-from postpilot import pipeline
+from postpilot import pipeline, ranking
 
 NOW = 1_800_000_000
 OR_MODELS = json.dumps({"data": [
@@ -61,7 +61,7 @@ def test_github_handle_checked_against_github():
 
 def test_viral_repo_heat_can_compete():
     sig = [{"kind": "GitHub trending", "rank": 0, "title": "morluto/rea", "detail": "", "engagement": 229268}]
-    heat, _ = pipeline._heat({"signal_ids": [0]}, sig)
+    heat, _ = ranking.heat({"signal_ids": [0]}, sig)
     assert heat == 3 + 15
 
 

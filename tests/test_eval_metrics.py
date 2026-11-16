@@ -226,3 +226,4 @@ def test_the_fixture_is_not_changed_by_a_run():
     before = copy.deepcopy(_options())
     metrics.evaluate_options(before, [])
     assert before == _options()
+

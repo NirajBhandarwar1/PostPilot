@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from postpilot import brain, db, llm, mailer, pipeline
+from postpilot import brain, db, llm, mailer, pipeline, ranking, reports
 from postpilot import factgate as fg
 
 # ---------- R1: untrusted data is marked; generated code is scanned ----------
@@ -189,13 +189,13 @@ def test_heat_ignores_padded_signals():
     signals = [{"kind": "Hacker News", "rank": 0, "engagement": 2000, "title": "x", "detail": ""},
                {"kind": "News", "rank": 0, "engagement": 0, "title": "y", "detail": ""}]
     padded = {"signal_ids": [0, 1], "buzz": 5}
-    assert pipeline._heat(padded, signals, ids=[1])[0] < pipeline._heat(padded, signals)[0]
+    assert ranking.heat(padded, signals, ids=[1])[0] < ranking.heat(padded, signals)[0]
 
 
 def test_model_opinion_is_capped():
-    assert pipeline.MODEL_SCORE_CAP == 15.0
+    assert ranking.MODEL_SCORE_CAP == 15.0
     t = {"builder_relevance": 10, "buzz": 10}
-    assert min(pipeline.MODEL_SCORE_CAP, t["builder_relevance"] + 0.5 * t["buzz"]) == 15.0
+    assert min(ranking.MODEL_SCORE_CAP, t["builder_relevance"] + 0.5 * t["buzz"]) == 15.0
 
 
 # ---------- O4: only built/posted ideas block a story, for 14 days, unless 2x hotter ----------
@@ -316,7 +316,7 @@ def test_outcomes_and_report(capsys):
     db.set_outcome(bid, recruiters=2, founders=1)
     row = db.get_outcome(bid)
     assert row["posted_url"].endswith("/x") and row["recruiters"] == 2 and row["founders"] == 1
-    result = pipeline.report()
+    result = reports.report()
     assert result["inbound"] == 3
     assert "production-receipt" in capsys.readouterr().out
     with pytest.raises(ValueError):
@@ -324,11 +324,11 @@ def test_outcomes_and_report(capsys):
 
 
 def test_report_with_nothing_posted(capsys):
-    assert pipeline.report() == {}
+    assert reports.report() == {}
     assert "No posts logged yet" in capsys.readouterr().out
 
 
 def test_replay_without_runs(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(pipeline, "settings", types.SimpleNamespace(data_dir=tmp_path))
-    assert pipeline.replay(3) == {}
+    monkeypatch.setattr(reports, "settings", types.SimpleNamespace(data_dir=tmp_path))
+    assert reports.replay(3) == {}
     assert "No saved runs yet" in capsys.readouterr().out

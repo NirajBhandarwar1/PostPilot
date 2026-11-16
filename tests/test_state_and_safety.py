@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from postpilot import brain, db, mailer, pipeline
+from postpilot import brain, db, mailer, pipeline, reports
 from tests.test_options import CAT, IDEA, env, fake_brief, option  # noqa: F401  (env is a fixture)
 
 
@@ -202,7 +202,7 @@ def test_results_go_to_the_build_you_posted_and_report_groups_by_it(capsys):
     db.set_outcome(bid, 1, posted_url="https://linkedin.com/p/1", recruiters=1)
     db.set_outcome(bid, recruiters=4, founders=1)                                    # still build 2
     assert db.get_outcome(bid)["recruiters"] == 4 and db.get_outcome(bid, 1)["recruiters"] == 1
-    result = pipeline.report()
+    result = reports.report()
     out = capsys.readouterr().out
     assert result["inbound"] == 6
     assert result["by"]["built"]["open-source-tool"]["inbound"] == 5

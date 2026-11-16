@@ -1,6 +1,6 @@
 """2026-10-22 upgrade: rank by real attention; ideas written by the 'writer' provider list."""
 
-from postpilot import llm, pipeline
+from postpilot import llm, ranking
 
 
 def sig(kind, rank, eng=0):
@@ -12,19 +12,19 @@ def test_viral_hn_story_beats_wide_news_coverage():
               [sig("News", i) for i in range(8)]
     viral = {"signal_ids": [0, 1], "buzz": 7}
     covered = {"signal_ids": list(range(2, 10)), "buzz": 7}
-    assert pipeline._heat(viral, signals)[0] > pipeline._heat(covered, signals)[0]
+    assert ranking.heat(viral, signals)[0] > ranking.heat(covered, signals)[0]
 
 
 def test_news_coverage_is_capped():
     signals = [sig("News", i) for i in range(40)]
-    few = pipeline._heat({"signal_ids": list(range(8)), "buzz": 5}, signals)[0]
-    many = pipeline._heat({"signal_ids": list(range(40)), "buzz": 5}, signals)[0]
+    few = ranking.heat({"signal_ids": list(range(8)), "buzz": 5}, signals)[0]
+    many = ranking.heat({"signal_ids": list(range(40)), "buzz": 5}, signals)[0]
     assert many == few
 
 
 def test_more_hn_points_means_hotter():
-    a = pipeline._heat({"signal_ids": [0], "buzz": 5}, [sig("Hacker News", 0, 2291)])[0]
-    b = pipeline._heat({"signal_ids": [0], "buzz": 5}, [sig("Hacker News", 0, 120)])[0]
+    a = ranking.heat({"signal_ids": [0], "buzz": 5}, [sig("Hacker News", 0, 2291)])[0]
+    b = ranking.heat({"signal_ids": [0], "buzz": 5}, [sig("Hacker News", 0, 120)])[0]
     assert a > b
 
 
