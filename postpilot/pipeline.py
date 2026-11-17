@@ -16,7 +16,7 @@ import json
 import logging
 import re
 import time
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from . import brain, db, factgate, llm, mailer, ranking, sources
@@ -785,6 +785,69 @@ REQUIRED_KINDS = ("demo-app", "open-source-tool")   # every options email has bo
 # ---------- the always-on loop ----------
 
 RETRY_AFTER_FAILURE_S = 3600
+ZERO_IDEA_RETRY_S = 3 * 3600          # a scout that found no ideas is tried again in 3 hours...
+ZERO_IDEA_RETRIES_PER_DAY = 2         # ...at most twice a UTC day, so a dry free quota is not hammered
+LOOP_DOWN_AFTER_S = 3600              # no sign of life for this long: the loop was not running
+
+
+def schedule_zero_idea_retry(now: datetime | None = None) -> bool:
+    """After a scout with no ideas, plan another one in 3 hours, at most twice per UTC day.
+    Returns True when a retry was planned. Set by run_forever AFTER it clears retry_scout_at."""
+    now = now or datetime.now(UTC)
+    key = "scout_retries:" + now.strftime("%Y-%m-%d")
+    used = int(db.get_meta(key, "0") or 0)
+    if used >= ZERO_IDEA_RETRIES_PER_DAY:
+        log.warning("scout found no ideas again; no more retries today (%d already)", used)
+        return False
+    db.set_meta(key, str(used + 1))
+    at = now + timedelta(seconds=ZERO_IDEA_RETRY_S)
+    db.set_meta("retry_scout_at", at.isoformat(timespec="seconds"))
+    log.warning("scout found no ideas; retrying at %s (retry %d of %d today)",
+                at.isoformat(timespec="minutes"), used + 1, ZERO_IDEA_RETRIES_PER_DAY)
+    return True
+
+
+def heartbeat(now: datetime | None = None) -> None:
+    """Write 'the loop is alive' so `status` and the next start can tell whether it was running. Never raises."""
+    try:
+        db.set_meta("last_loop_at", (now or datetime.now(UTC)).isoformat(timespec="seconds"))
+    except Exception as e:
+        log.warning("could not write the loop heartbeat: %s", str(e)[:200])
+
+
+def loop_age(now: datetime | None = None) -> float | None:
+    """Seconds since the loop last wrote its heartbeat, or None if it never has."""
+    last = db.get_meta("last_loop_at")
+    if not last:
+        return None
+    return ((now or datetime.now(UTC)) - datetime.fromisoformat(last)).total_seconds()
+
+
+def _ago(seconds: float) -> str:
+    return f"{seconds / 60:.0f} min" if seconds < 5400 else f"{seconds / 3600:.1f} h"
+
+
+def loop_line(now: datetime | None = None) -> str:
+    """The `status` line: alive, STOPPED?, or never started."""
+    age = loop_age(now)
+    if age is None:
+        return "never started (python -m postpilot run)"
+    if age > LOOP_DOWN_AFTER_S:
+        return f"STOPPED? last seen {_ago(age)} ago (start it again; README, 'Keep it running')"
+    return f"alive, last seen {_ago(age)} ago"
+
+
+def report_downtime(gap_s: float, now: datetime | None = None) -> None:
+    """Email once that the loop was not running. A failed send is logged and never stops the start."""
+    now = now or datetime.now(UTC)
+    last = now - timedelta(seconds=gap_s)
+    try:
+        _notify(f"[PostPilot] was down for {_ago(gap_s)}",
+                f"PostPilot was not running for {_ago(gap_s)} (last seen {last:%Y-%m-%d %H:%M} UTC, back at "
+                f"{now:%Y-%m-%d %H:%M} UTC).\n\nThe scout and the reply checks are running again; a missed scout "
+                "runs by itself. If this happens often, start PostPilot at logon: see 'Keep it running' in the README.")
+    except Exception:
+        log.exception("could not send the 'was down' email")
 
 
 def scout_due() -> bool:
@@ -888,21 +951,31 @@ def run_forever() -> None:
         raise SystemExit("Set up a model provider in .env (e.g. GROQ_API_KEY) before starting the loop.")
     log.info("PostPilot running: scout every %g days, check email every %g min",
              settings.cycle_days, settings.check_minutes)
+    gap = loop_age()                        # before the first mark of this run: how long was nothing running?
+    heartbeat()
+    if gap is not None and gap > LOOP_DOWN_AFTER_S:
+        report_downtime(gap)
     while True:
+        heartbeat()
         try:
             if scout_due():
-                scout()
+                batch_id = scout()
                 db.set_meta("retry_scout_at", "")
+                if batch_id is None:        # no ideas and no error: plan the capped retry after the clear above
+                    schedule_zero_idea_retry()
         except Exception:
             retry_at = datetime.fromtimestamp(time.time() + RETRY_AFTER_FAILURE_S, UTC)
             log.exception("scout failed; retrying at %s", retry_at.isoformat(timespec="minutes"))
             db.set_meta("retry_scout_at", retry_at.isoformat(timespec="seconds"))
+        heartbeat()
         try:
             resend_unsent()
         except Exception:
             log.exception("resending the ideas email failed")
+        heartbeat()
         try:
             check_replies()
         except Exception:
             log.exception("reply check failed")
+        heartbeat()
         time.sleep(settings.check_minutes * 60)

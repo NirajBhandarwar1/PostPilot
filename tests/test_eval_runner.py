@@ -245,3 +245,19 @@ def test_real_golden_stories_are_valid_and_clean():
         assert not any(p.search(dumped) for p in runner.SECRETS)
 
 
+
+def test_cli_run_prints_todays_free_quota_before_it_starts(folders, fake_pipeline, capsys):
+    llm.record_usage("groq", "m", 1000, 500)
+    runner.GOLDEN_DIR.mkdir(parents=True)
+    (runner.GOLDEN_DIR / "one.json").write_text(json.dumps(_story()), encoding="utf-8")
+    runner.cli(_args())
+    out = capsys.readouterr().out
+    assert "Free quota today: Groq" in out
+    assert out.index("Free quota today") < out.index("running one")
+
+
+def test_cli_run_prints_no_quota_line_when_nothing_was_used(folders, fake_pipeline, capsys):
+    runner.GOLDEN_DIR.mkdir(parents=True)
+    (runner.GOLDEN_DIR / "one.json").write_text(json.dumps(_story()), encoding="utf-8")
+    runner.cli(_args())
+    assert "Free quota today" not in capsys.readouterr().out

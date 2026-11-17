@@ -163,7 +163,7 @@ def add_meta_int(key: str, n: int) -> None:
                   "value = CAST(CAST(value AS INTEGER) + CAST(excluded.value AS INTEGER) AS TEXT)", (key, str(n)))
 
 
-CLAIM_STALE_S = 20 * 60        # a claim older than this belongs to a run that died (a build takes minutes)
+CLAIM_STALE_S = 60 * 60        # a claim older than this belongs to a run that died (a slow build can take 30+ min)
 
 
 def claim(key: str) -> str:

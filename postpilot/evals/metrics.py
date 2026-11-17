@@ -10,7 +10,8 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-# Mirrors of pipeline/render limits, kept here so the eval can be read on its own. Kept in step by tests.
+# The eval's own bars. They may be stricter than the app on purpose (the eval wants 3+ options, the pipeline
+# accepts 2). Only SCORE_GOOD must equal pipeline.POST_TARGET; tests/test_eval_metrics.py checks that one.
 MIN_OPTIONS = 3
 MAX_DROPPED = 1
 MIN_EFFORT, MAX_EFFORT = 20, 240

@@ -255,12 +255,12 @@ def test_a_reply_another_run_is_handling_is_left_alone(env, monkeypatch):
     assert handled == [] and marked == []
 
 
-def test_a_claim_from_a_run_that_died_is_taken_over_after_twenty_minutes():
+def test_a_claim_from_a_run_that_died_is_taken_over_after_an_hour():
     from datetime import datetime, timedelta
     ago = lambda m: "busy:" + (datetime.now(UTC) - timedelta(minutes=m)).isoformat()   # noqa: E731
     db.set_meta("reply:u3", ago(5))
     assert db.claim("reply:u3") == "busy"                  # a build is probably still running
-    db.set_meta("reply:u3", ago(30))
+    db.set_meta("reply:u3", ago(61))
     assert db.claim("reply:u3") == "claimed"               # the run that held it died
 
 

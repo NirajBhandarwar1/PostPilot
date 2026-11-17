@@ -57,6 +57,7 @@ def status() -> None:
     print(f"Voice profile  : {ok(bool(pipeline.voice()))}  ({settings.voice_file})")
     print(f"Output folder  : {settings.output_dir}")
     print(f"Cycle          : every {settings.cycle_days:g} days, replies checked every {settings.check_minutes:g} min")
+    print(f"Loop           : {pipeline.loop_line()}")
     print(f"Last scout     : {db.get_meta('last_scout_at', 'never')}")
     rates = db.llm_pass_rates(7)
     if rates:

@@ -227,3 +227,8 @@ def test_the_fixture_is_not_changed_by_a_run():
     metrics.evaluate_options(before, [])
     assert before == _options()
 
+
+def test_the_post_bar_is_the_pipelines_post_target():
+    """The eval's other limits are its own and may be stricter; this one number must not drift (review R1)."""
+    from postpilot import pipeline
+    assert metrics.SCORE_GOOD == pipeline.POST_TARGET

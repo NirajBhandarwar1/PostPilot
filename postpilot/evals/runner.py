@@ -324,6 +324,8 @@ def cli(args: argparse.Namespace) -> int:
         elif args.eval_cmd == "list":
             return list_stories()
         else:
+            for line in llm.quota_lines():              # the daily scout uses the same free quota
+                print(f"Free quota today: {line}")
             prev = load_run()                           # before saving: the new run becomes 'last'
             run = run_eval(names=args.story or None, max_stories=args.max)
             if not run["stories"]:
