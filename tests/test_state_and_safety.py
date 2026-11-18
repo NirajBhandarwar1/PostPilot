@@ -342,13 +342,8 @@ def test_probe_reports_unconfigured_and_failures(monkeypatch):
 
 # ---------- T9 small gaps (D15) ----------
 
-def test_linkedin_x_and_bing_results_are_parsed():
+def test_bing_results_are_parsed():
     from postpilot import sources
-    ddg = (b'<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.linkedin.com'
-           b'%2Fposts%2Fa-1&amp;rut=x">I tested <b>REA</b> on 3 apps &amp; here&#x27;s what broke</a>')
-    got = sources.social_search("rea", "linkedin.com/posts", fetch=lambda u, h=None: ddg)
-    assert got == [{"title": "I tested REA on 3 apps & here's what broke",
-                    "url": "https://www.linkedin.com/posts/a-1"}]
     bing = b'<h2 class="b"><a href="https://ex.com/a" h="x"><strong>REA</strong> guide &amp; tips</a></h2>'
     assert sources.web_search("rea", fetch=lambda u, h=None: bing) == [{"title": "REA guide & tips", "url": ""}]
 

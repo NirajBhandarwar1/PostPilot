@@ -22,6 +22,13 @@ def models_answer(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_apify(monkeypatch):
+    """A developer's own APIFY_TOKEN must never leak into a test: LinkedIn search stays off unless a test turns it on."""
+    for name in ("APIFY_TOKEN", "APIFY_MAX_POSTS_PER_MONTH", "APIFY_POSTS_PER_QUERY", "APIFY_LINKEDIN_ACTOR"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     """Any real HTTP call in a test is a bug: fail loudly."""
     import urllib.request

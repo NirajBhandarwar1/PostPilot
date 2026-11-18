@@ -541,13 +541,14 @@ DOCS_RAW_CHARS = 6000
 DIGEST_RAW_CHARS = 4000
 
 
-def _pack_text(idea: dict) -> str:
-    """The saved evidence pack of this idea as prompt text; '' for ideas saved without one (or a broken one)."""
+def _pack_text(idea: dict, skip: tuple[str, ...] = ()) -> str:
+    """The saved evidence pack of this idea as prompt text, without facts from the `skip` sources; '' for ideas
+    saved without one (or a broken one)."""
     raw = idea.get("evidence_pack")
     if not raw:
         return ""
     try:
-        return brain.render_evidence(brain.EvidencePack.model_validate(raw))
+        return brain.render_evidence(brain.EvidencePack.model_validate(raw), skip)
     except Exception as e:
         log.warning("saved evidence pack is unreadable (%s); using the raw research", e)
         return ""
@@ -570,7 +571,9 @@ def _make_pack(idea: dict, digest: str, docs: str) -> dict | None:
 
 
 def _facts(idea: dict) -> str:
-    pack_text = _pack_text(idea)
+    """Numbers the post may state as fact. Facts that came from LinkedIn posts are left out: a stranger's claim is
+    not a source ('cut my costs 80%'), it only helps the options pick a fresh angle."""
+    pack_text = _pack_text(idea, skip=("linkedin",))
     if pack_text:
         return "\n".join([pack_text, f"- {idea['handle_facts']}"] if idea.get("handle_facts") else [pack_text])
     r = idea.get("research") or {}

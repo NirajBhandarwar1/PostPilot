@@ -39,7 +39,15 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Command-line tests (every subcommand reaches its function; `precommit` exits 0 or 1 as a real process),
   and import-rule tests that keep the modules in layers.
 
+- Optional LinkedIn research through Apify's free plan (off without `APIFY_TOKEN`): each story gets a search of public
+  posts, and `examples fetch` pulls posts from authors or searches you choose into a private, gitignored `examples.md`
+  (best 30, 600 to 1,800 characters, no job ads or pitches). The post writer sees 3 examples per post as style only.
+  Cost guards: a monthly post cap (default 500), a 5-cent charge limit per run, one author per run, off for the month
+  when Apify says the credit is used up. `status` shows the usage and the example count.
+
 ### Changed
+- The DuckDuckGo LinkedIn and X search is removed: DuckDuckGo now answers with a bot check, so it found nothing and
+  cost a few calls on every scout.
 - A reply claim now lasts 60 minutes instead of 20, so a slow build is not started twice.
 - `precommit` and the quota/health code moved into `__main__.py` and `llm.py` (15 files), and `pipeline.py`
   gave its ranking rules to `ranking.py` and its replay and report code to `reports.py`. `make_options`,

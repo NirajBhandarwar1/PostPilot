@@ -21,7 +21,8 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from functools import partial
 
-from .config import env
+from . import db
+from .config import env, settings
 
 log = logging.getLogger("postpilot.sources")
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) postpilot/0.3"
@@ -327,17 +328,177 @@ def hn_search(query: str, fetch=None, days: int = 30, limit: int = 6) -> list[di
              "url": f"https://news.ycombinator.com/item?id={h['objectID']}"} for h in hits[:limit]]
 
 
-def social_search(query: str, site: str, fetch=None, limit: int = 6) -> list[dict]:
-    """Public LinkedIn / X posts about it, via DuckDuckGo's HTML results (titles only)."""
-    url = "https://html.duckduckgo.com/html/?q=" + _q(f"site:{site} {query}")
-    html = (fetch or _get)(url).decode("utf-8", "replace")
-    out = []
-    for href, title in re.findall(r'class="result__a" href="(.*?)">(.*?)</a>', html):
-        t = re.sub(r"<.*?>", "", title)
-        t = re.sub(r"&#x27;|&#39;", "'", t).replace("&amp;", "&").replace("&quot;", '"')
-        real = urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get("uddg", [href])[0]
-        out.append({"title": t[:120], "url": real})
-    return out[:limit]
+# ---------- LinkedIn posts through Apify (optional, free plan only) ----------
+# DuckDuckGo and Bing no longer give LinkedIn results, so public posts come from an Apify actor that needs no
+# LinkedIn login. It is OFF unless APIFY_TOKEN is set. It can never cost money: use Apify's free plan with no payment
+# method on file (Apify then stops at the monthly credit), PostPilot stops itself at APIFY_MAX_POSTS_PER_MONTH, and
+# every run carries Apify's own per-run charge limit. LinkedIn's terms forbid automated collection: your risk.
+
+APIFY_ACTOR = "harvestapi~linkedin-post-search"      # pay per post (about $0.002); input fields read from its public schema
+APIFY_RUN_CHARGE_LIMIT_USD = "0.05"                  # Apify refuses to charge a run above this
+APIFY_DEFAULT_MONTHLY_POSTS = 500                    # about $1.00 of the $5 free credit
+APIFY_DEFAULT_POSTS_PER_QUERY = 10
+
+
+def _int_setting(name: str, default: int) -> int:
+    try:
+        return max(int(env(name, str(default)) or default), 0)
+    except ValueError:
+        return default
+
+
+def _apify_key(prefix: str) -> str:
+    return f"{prefix}:{datetime.now(UTC):%Y-%m}"
+
+
+def apify_usage() -> tuple[int, int]:
+    """(posts used this month, monthly cap). Counted here, so the cap holds even if Apify's own limit is higher."""
+    used = int(db.get_meta(_apify_key("apify_posts"), "0") or 0)
+    return used, _int_setting("APIFY_MAX_POSTS_PER_MONTH", APIFY_DEFAULT_MONTHLY_POSTS)
+
+
+def apify_state() -> str:
+    """One line for `status`: off, on with usage, or off for the month because the free credit ran out."""
+    if not env("APIFY_TOKEN"):
+        return "off (set APIFY_TOKEN in .env to turn on; free plan only)"
+    if db.get_meta(_apify_key("apify_off")):
+        return "off until next month (Apify said the free credit is used up)"
+    if _apify_paused():
+        left = max(int(float(db.get_meta("apify_pause_until", "0") or 0) - time.time()) // 60, 1)
+        return f"paused for about {left} more min (Apify refused: too many runs at once or a limit)"
+    used, cap = apify_usage()
+    return f"on, {used} of {cap} posts used this month"
+
+
+def _apify_paused() -> bool:
+    return float(db.get_meta("apify_pause_until", "0") or 0) > time.time()
+
+
+def _apify_error_type(e: urllib.error.HTTPError) -> str:
+    """Apify's own name for why it refused (for example 'concurrent-runs-limit-exceeded'); '' when unreadable."""
+    try:
+        return str(json.loads(e.read().decode("utf-8", "replace"))["error"]["type"])[:80]
+    except Exception:
+        return ""
+
+
+def _post_json(url: str, payload: dict, headers: dict, timeout: int = 150):
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Content-Type": "application/json", "User-Agent": "postpilot/0.4", **headers})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def _linkedin_query(text: str) -> str:
+    """Plain words only: model-written names carry typographic hyphens and slashes that match nothing."""
+    t = re.sub(r"[‐-―−_/-]+", " ", text or "")
+    t = re.sub(r"[^\w\s.+#]", " ", t)
+    return " ".join(t.split())[:80]
+
+
+def _linkedin_row(item) -> dict | None:
+    """One public post as a small plain dict, or None when it is not a post with text."""
+    if not isinstance(item, dict) or item.get("type") != "post":
+        return None
+    raw = re.sub(r"\n{3,}", "\n\n", str(item.get("content") or "").replace("\r\n", "\n")).strip()
+    text = " ".join(raw.split())
+    if not text:
+        return None
+    author = item["author"] if isinstance(item.get("author"), dict) else {}
+    eng = item["engagement"] if isinstance(item.get("engagement"), dict) else {}
+
+    def count(key: str) -> int:
+        v = eng.get(key)
+        return v if isinstance(v, int) and not isinstance(v, bool) else 0
+
+    url = str(item.get("linkedinUrl") or "")
+    return {"title": text[:120], "url": url[:300] if url.startswith("https://www.linkedin.com/") else "",
+            "author": str(author.get("name") or "")[:60],
+            "likes": count("likes"), "comments": count("comments"), "shares": count("shares"), "text": text[:600],
+            "raw": raw[:1800], "length": len(raw)}      # line breaks kept: the shape of a post is part of its style
+
+
+def _engagement(row: dict) -> int:
+    return row["likes"] + 2 * row["comments"] + row["shares"]
+
+
+def linkedin_posts(query: str, post=None, limit: int = 5) -> list[dict]:
+    """Public LinkedIn posts about `query` from the last month, most engaged first. [] when off, over the monthly
+    cap, or on any error: research must never stop because this is unavailable."""
+    rows = _apify_search(query, _int_setting("APIFY_POSTS_PER_QUERY", APIFY_DEFAULT_POSTS_PER_QUERY), "month", post)
+    return sorted(rows, key=lambda r: -_engagement(r))[:limit]
+
+
+def _only_the_owner(rows: list[dict]) -> list[dict]:
+    """A profile's feed also holds posts the person reposted or was shown with. The author who wrote most of the
+    run is the owner: keep only their own posts, so the examples are the style of the person you chose."""
+    names = [r["author"] for r in rows if r["author"]]
+    if not names:
+        return rows
+    owner = max(set(names), key=names.count)
+    return [r for r in rows if r["author"] == owner]
+
+
+def linkedin_examples(queries: list[str], per_query: int = 20, post=None, authors: list[str] | None = None) -> list[dict]:
+    """Posts from the last year for several searches and/or several chosen authors (the one-time pull for the
+    examples file), duplicates removed. Every run goes through the same cap and error handling as linkedin_posts."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    runs = [_only_the_owner(_apify_search("", per_query, "year", post, author=a)) for a in authors or []]
+    runs += [_apify_search(q, per_query, "year", post) for q in queries]
+    for rows in runs:
+        for row in rows:
+            key = row["url"] or row["text"][:80]
+            if key not in seen:
+                seen.add(key)
+                out.append(row)
+    return out
+
+
+def _apify_search(query: str, per_query: int, posted_limit: str, post=None, author: str = "") -> list[dict]:
+    """One capped Apify run: a keyword search, or the posts of ONE LinkedIn profile or company (`author`, its URL).
+    One author per run, so the per-run charge limit also limits the cost of each author. Never raises; every
+    returned item is counted against the monthly cap. `post` replaces the HTTP call in tests."""
+    token = env("APIFY_TOKEN")
+    q = _linkedin_query(query)
+    if author and not author.startswith("https://www.linkedin.com/"):
+        return []
+    if not token or not (q or author) or db.get_meta(_apify_key("apify_off")) or _apify_paused():
+        return []
+    used, cap = apify_usage()
+    want = min(per_query, cap - used)
+    if want <= 0:                       # never send maxPosts 0: for this actor that means "scrape everything"
+        log.info("LinkedIn search skipped: %d of %d posts used this month", used, cap)
+        return []
+    url = (f"https://api.apify.com/v2/acts/{APIFY_ACTOR}/run-sync-get-dataset-items"
+           f"?maxTotalChargeUsd={APIFY_RUN_CHARGE_LIMIT_USD}")
+    payload = ({"authorUrls": [author], "maxPosts": want, "postedLimit": posted_limit} if author else
+               {"searchQueries": [q], "maxPosts": want, "postedLimit": posted_limit, "sortBy": "relevance"})
+    counter = _apify_key("apify_posts")
+    try:
+        items = (post or _post_json)(url, payload, {"Authorization": f"Bearer {token}"})
+    except urllib.error.HTTPError as e:
+        if e.code in (402, 403):
+            why = _apify_error_type(e)
+            if re.search(r"(?i)usage|credit|insufficient", why):     # the plan's money is really gone
+                db.set_meta(_apify_key("apify_off"), "1")
+                log.warning("Apify says the free credit is used up (%s): LinkedIn search is off until next month", why)
+            else:                       # too many runs at once, a plan limit, a token problem: wait, do not give up
+                wait = 300 if "concurrent" in why else 3600
+                db.set_meta("apify_pause_until", str(time.time() + wait))
+                log.warning("Apify refused (HTTP %d %s): LinkedIn search paused for %d min", e.code, why or "?", wait // 60)
+        else:
+            log.warning("Apify LinkedIn search failed: HTTP %d", e.code)
+            if e.code not in (401, 404, 429):
+                db.add_meta_int(counter, want)      # a run may have been billed (408 wait ended, 400 run failed, 5xx)
+        return []
+    except Exception as e:
+        db.add_meta_int(counter, want)              # a timeout may still have been billed
+        log.warning("Apify LinkedIn search failed: %s", str(e)[:150])
+        return []
+    items = items if isinstance(items, list) else []
+    db.add_meta_int(counter, max(len(items), 1))    # every returned item is billed; a search with no result costs a little too
+    return [r for r in map(_linkedin_row, items) if r]
 
 
 def web_search(query: str, fetch=None, limit: int = 6) -> list[dict]:
@@ -441,8 +602,9 @@ def clean_markdown(raw: str, limit: int = 5000) -> str:
     return out[:limit]
 
 
-def research(idea: dict, fetch=None) -> dict:
-    """Search every source for the idea's hot thing. Returns lists per source (may be empty)."""
+def research(idea: dict, fetch=None, post=None) -> dict:
+    """Search every source for the idea's hot thing. Returns lists per source (may be empty).
+    `fetch` replaces GET requests and `post` the Apify call (tests)."""
     handle = (idea.get("handle") or "").strip()
     name = handle.replace("/", " ") if handle else (idea.get("entities") or [idea.get("topic", "")])[0]
     short = handle.split("/")[-1] if "/" in handle else name
@@ -450,10 +612,9 @@ def research(idea: dict, fetch=None) -> dict:
         "videos": lambda: youtube_search(name, fetch),
         "repos": lambda: github_search(short if "/" in handle else name, handle, fetch),
         "hn": lambda: hn_search(short if "/" in handle else name, fetch),
-        "linkedin": lambda: social_search(name, "linkedin.com/posts", fetch),
-        "x": lambda: social_search(name, "x.com", fetch),
+        "linkedin": lambda: linkedin_posts(name, post=post),
     }
-    out = {"query": name}
+    out: dict = {"query": name, "x": []}        # X has no free search any more; the key stays for saved batches
     for key, job in jobs.items():
         out[key] = []
         for attempt in range(2):            # one retry: a single dropped connection is common
@@ -465,7 +626,7 @@ def research(idea: dict, fetch=None) -> dict:
         log.info("research %s: %d results for %r", key, len(out[key]), name)
     out["docs"], out["docs_from"] = docs_for(idea, fetch)
     log.info("research docs: %d chars from %s", len(out["docs"]), out["docs_from"] or "nowhere")
-    if not out["linkedin"] and not out["x"]:
+    if not out["linkedin"]:
         try:
             out["web"] = web_search(f"{name} guide OR tutorial OR built OR tested", fetch)
         except Exception as e:
@@ -486,11 +647,21 @@ def research_digest(r: dict) -> str:
     if r.get("hn"):
         lines.append("Top Hacker News threads:")
         lines += [f"- {h['points']} points, {h['comments']} comments: {h['title']}" for h in r["hn"]]
-    for key, label in (("linkedin", "LinkedIn posts"), ("x", "X posts"), ("web", "Web posts and guides")):
+    if r.get("linkedin"):
+        lines.append("LinkedIn posts about it (what people already said: pick a fresh angle, never copy):")
+        lines += [_linkedin_line(p) for p in r["linkedin"]]
+    for key, label in (("x", "X posts"), ("web", "Web posts and guides")):
         if r.get(key):
             lines.append(f"{label} about it:")
             lines += [f"- {p['title']}" for p in r[key]]
     return "\n".join(lines) or "(no research results)"
+
+
+def _linkedin_line(p: dict) -> str:
+    if "likes" not in p:                # a saved batch from before the Apify search: title only
+        return f"- {p['title']}"
+    who = p.get("author") or "someone"
+    return f"- {p['likes']} likes, {p['comments']} comments, {who}: \"{p['text'][:260]}\""
 
 
 def research_titles(r: dict) -> list[str]:

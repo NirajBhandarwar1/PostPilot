@@ -189,6 +189,32 @@ Cost: a scout is about 12K tokens, and each build plan a few times that, so the 
 covers several batches a day. Past the cap the free backups write and the email says so.
 `python -m postpilot doctor` tests that each backup really answers. Every setting is in `.env.example`.
 
+## LinkedIn research and style examples (optional, free)
+
+Off by default. It reads public LinkedIn posts through [Apify](https://apify.com) (no LinkedIn login) for two things:
+
+- **Per story:** a search for the story's name (last month, 10 posts, the 5 most engaged shown to the writer) so the
+  options avoid angles people already took.
+- **Style examples:** `python -m postpilot examples fetch --author https://www.linkedin.com/in/someone` pulls posts from
+  people whose writing you admire (repeat `--author`; or use `--query "some search"`; with neither, 5 general
+  AI-builder searches run). It keeps the best 30 (600 to 1,800 characters, no job ads or pitches, most engaged first)
+  in a private `examples.md` for you to edit. The writer sees 3 of them per post, picked by topic, as examples of
+  structure and rhythm, never of words or facts. `examples.example.md` shows the format; the file is gitignored
+  because the posts belong to their authors.
+
+To turn it on, free of charge:
+1. Make an Apify account on the **Free plan** and **do not add a payment method**. Apify's pricing page says the free
+   plan has no card and $5 of usage a month, and that free accounts are blocked, not charged, at the limit.
+2. Copy your API token (Settings, API & integrations) into `.env` as `APIFY_TOKEN=...`.
+3. `python -m postpilot status` should now say `LinkedIn posts : on, 0 of 500 posts used this month`.
+
+Cost guards: the actor lists about $0.002 per post. PostPilot stops itself at `APIFY_MAX_POSTS_PER_MONTH` (default 500,
+about $1 of the credit), every run carries a 5-cent charge limit, and when Apify refuses for lack of credit it stays off
+until next month. If the search ever stops working, PostPilot carries on without it.
+
+LinkedIn's terms forbid automated collection and you are responsible for following them (and Apify's terms). Use it at
+your own risk, and never publish other people's posts.
+
 ## Disclaimer
 
 PostPilot is an independent project, not affiliated with or endorsed by LinkedIn, Google, OpenAI,

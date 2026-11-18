@@ -40,6 +40,7 @@ class Settings:
 
     output_dir: Path = Path(env("OUTPUT_DIR", str(ROOT / "output")))
     voice_file: Path = Path(env("VOICE_FILE", str(ROOT / "voice.md")))
+    examples_file: Path = Path(env("EXAMPLES_FILE", str(ROOT / "examples.md")))
     data_dir: Path = field(default=ROOT / "data")
 
     @property

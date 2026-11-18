@@ -509,8 +509,8 @@ One short sentence each, with source = youtube, github, hn, linkedin, x, web or 
     return EvidencePack(facts=facts[:EVIDENCE_MAX_FACTS])
 
 
-def render_evidence(pack: EvidencePack) -> str:
-    return "\n".join(f"- [{f.source}] {f.fact}" for f in pack.facts)
+def render_evidence(pack: EvidencePack, skip: tuple[str, ...] = ()) -> str:
+    return "\n".join(f"- [{f.source}] {f.fact}" for f in pack.facts if f.source not in skip)
 
 
 def make_options(idea: dict, voice: str, model_keys: list[str], notes: dict | None = None,
