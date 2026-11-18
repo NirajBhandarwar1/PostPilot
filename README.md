@@ -13,7 +13,7 @@ The goal is to get noticed by people who hire in AI, by posting experiments rath
 1. **Scout.** Pulls trending items from AI news feeds (Google News, TechCrunch, The Verge,
    OpenAI, Google AI, Hugging Face, Simon Willison), Hacker News, new GitHub repos and
    Hugging Face papers. All free, no keys.
-2. **Pick.** The writer model (GPT-6 first, free models as backup) picks 3 ideas you can build, test or compare in about an hour. Each one
+2. **Pick.** The writer model (free: Groq first, Cloudflare as backup) picks 3 ideas you can build, test or compare in about an hour. Each one
    targets a different role family and skips topics you've already covered.
 3. **Email.** You get `[PostPilot #N] 3 AI post ideas`. Reply `1`, `2`, `3` or `skip`.
 4. **Options.** Your reply `2` brings `[PostPilot #N.2]`: 3-5 build options for that story,
@@ -65,28 +65,54 @@ Posts are written for the person described in `voice.md` and the `PERSONA_*` lin
 | `python -m postpilot scout [--no-email]` | scout once now |
 | `python -m postpilot options 4 2 [--no-email] [--fresh]` | build options for idea 2 of batch #4 (email reply `2`); saved options are resent, `--fresh` (reply `2 new`) makes a new list tagged `#4.2b` |
 | `python -m postpilot build 4 2 --option 3` | always writes a fresh BUILD.md for option 3 (an email reply resends an existing plan instead of paying twice) |
-| `python -m postpilot eval --builds [N]` | re-run N saved stories through options, BUILD.md and post with GPT-6 (max 60k tokens, keeps 100k of the day's cap for live emails); PASS/FAIL bars vs the last run |
+| `python -m postpilot eval run [--story NAME] [--max 3]` | score the current prompts on the golden stories with your free models; shows what got better or worse since the last run (see [Evaluation](#evaluation)) |
+| `python -m postpilot eval live [DAYS]` | signals from real use: pick rate, your ratings, model health, inbound per post |
 | `python -m postpilot check` | check email replies once |
 | `python -m postpilot status` | setup check and recent batches |
 | `python -m postpilot precommit` | secret check before you commit (blocks .env, real key values, key shapes) |
 | `python -m postpilot eval [N]` | replay the last N saved runs: fact-check failure rate and unverified claims per idea |
+| `python -m postpilot eval history [N]` | replay the last N saved scouts: fact-check failure rate and unverified claims per idea |
 | `python -m postpilot doctor` | live check: how many signals each trend source returns right now, and whether each backup writer model answers |
 | `python -m postpilot posted 5 <url> [--build N]` | after you publish: record the LinkedIn link for batch #5 (latest build unless `--build`; BUILD.md's "After you post" shows the exact command) |
 | `python -m postpilot inbound 5 --recruiters 2 --founders 1` | record who reached out after that post (goes to the build you recorded as posted) |
 | `python -m postpilot report` | which formats and topics bring the most recruiters and founders |
 | `.venv\Scripts\python -m pytest -q` | run the tests (offline, ~1 second) |
 
-## Models (updated 2026-10-22)
+## Models (updated 2026-11-12)
 
-- Topic finding and all writing (ideas, posts, code) use `WRITER_PROVIDERS` in `.env`:
-  `openai,groq,cloudflare` = GPT-6 Sol first, then free gpt-oss-120b on Groq (best free idea and
-  plan writer, but its free limit is too small for the options request), then gpt-oss-120b on
-  Cloudflare (slower, but takes every request size). A live comparison on 2026-10-28 ranked them.
-  Chosen by a bake-off on the same viral stories: GPT-6 Sol was the only model with sharp,
-  feasible ideas and no invented results. About 8K input + 4K output tokens per batch.
-- Remove `openai` from `WRITER_PROVIDERS` to run 100% free again.
+- Topic finding and all writing (ideas, posts, code) use `WRITER_PROVIDERS` in `.env`. The default setup is
+  free: `groq,cloudflare` = gpt-oss-120b on Groq first (best free idea and plan writer, but its free limit
+  is too small for the options request), then gpt-oss-120b on Cloudflare (slower, but takes every request
+  size). The options request goes to Cloudflare first (`OPTIONS_PROVIDERS`). Each task can have its own
+  list, see Providers below. Free tiers are small (Cloudflare 10,000 neurons and Groq about 200K tokens per
+  UTC day), so `status` shows how much of each is used today.
+- A paid OpenAI writer still works if you add `openai` first in `WRITER_PROVIDERS`, with a daily token cap
+  (`OPENAI_DAILY_TOKENS`). It is off by default and nothing needs it.
 - Trend radar ranks by real attention: Hacker News points, Techmeme, Reddit, GitHub and
   Hugging Face trending; news coverage counts but is capped.
+
+## Keep it running
+
+PostPilot is one process, so it only works while it runs. Three things help you notice and fix a stop:
+
+- `python -m postpilot status` shows a **Loop** line: `alive, last seen 4 min ago`, or
+  `STOPPED? last seen 3.0 h ago` when the loop has not been seen for over an hour.
+- When PostPilot starts again after more than an hour, it emails you once: `[PostPilot] was down for 3.0 h`.
+  The very first start sends nothing.
+- A scout that finds no ideas (and no error) is tried again 3 hours later, at most twice a day.
+
+To start it at logon and restart it if it fails (Windows PowerShell; set `$dir` to your project folder):
+
+```powershell
+$dir = "D:\Projects\postpilot"      # your project folder
+$action = New-ScheduledTaskAction -Execute "$dir\.venv\Scripts\python.exe" -Argument "-m postpilot run" -WorkingDirectory $dir
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+$settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 5) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName PostPilot -Action $action -Trigger $trigger -Settings $settings
+```
+
+On macOS or Linux use a `launchd` agent or a `systemd --user` service that runs
+`.venv/bin/python -m postpilot run` in the project folder.
 
 ## Fact gate
 
@@ -119,11 +145,16 @@ and [SECURITY.md](SECURITY.md); design decisions are in [docs/adr/](docs/adr/).
 ## Files
 
 ```
+postpilot/__main__.py   the command line, `status`, and the secret check you run before a commit
 postpilot/sources.py    trend radar + per-idea research (YouTube, GitHub, HN, social, official docs)
 postpilot/brain.py      prompts and output schemas: topics, ideas, options, BUILD.md, post
-postpilot/llm.py        model client: GPT-6 writer, daily cap, ordered free backups, retries
+postpilot/llm.py        model client: per-task routing, limit-fit, retries; free-quota counters and the health line
 postpilot/factgate.py   fact check: live model catalogs, claims vs sources, code/command scans, cost
-postpilot/pipeline.py   the flow: scout, options, build, reply handling, the always-on loop, eval
+postpilot/pipeline.py   the flow: scout, options, build, reply handling, the always-on loop
+postpilot/ranking.py    how hot a story is (pure scoring, no model, no database)
+postpilot/reports.py    replay of saved scouts, and which posts brought inbound
+postpilot/evals/        evaluation: scoring rules, the golden-story runner, real-use signals
+evals/golden/           saved stories the eval runs (committed); evals/results/ holds run history (not committed)
 postpilot/render.py     what you see: the 3 emails (text + HTML) and the BUILD.md layout
 postpilot/mailer.py     Gmail send + read replies (App Password, DKIM-verified)
 postpilot/db.py         SQLite: batches, builds, per-build outcomes, merge-on-save
@@ -141,8 +172,8 @@ and the first provider that works wins; if it fails, the next one takes over:
   with OpenAI credit: `openai,groq,cloudflare`.
 - Each task can have its own list: `SCOUT_PROVIDERS`, `IDEAS_PROVIDERS`, `OPTIONS_PROVIDERS`,
   `BRIEF_PROVIDERS`, `POST_PROVIDERS`. Unset, a task uses `WRITER_PROVIDERS`. An entry can pin a
-  model, e.g. `OPTIONS_PROVIDERS=cloudflare:@cf/nvidia/nemotron-3-120b-a12b,cloudflare,groq`
-  (the options request is too big for Groq's free 8K tokens/min).
+  model, e.g. `OPTIONS_PROVIDERS=cloudflare,groq`
+  (the options request needs about 8.5K tokens in and out, more than Groq's free 8K tokens/min).
 - `LLM_PROVIDERS` for everything else, and for the writer too when `WRITER_PROVIDERS` is not set.
 
 | provider | model | cost | notes |

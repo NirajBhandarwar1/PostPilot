@@ -1,19 +1,5 @@
 # TODOS
 
-## Models
-
-### Keep the newest OpenAI model family automatically
-
-**What:** Make `fetch_openai` in `postpilot/factgate.py` keep the newest gpt-N chat family (for example GPT-7 when it ships) instead of matching only `gpt-6(\.\d)?-(sol|luna|astra)`.
-
-**Why:** A new OpenAI flagship is a prime face-off story, but today it would never appear in the model list or as a writer, and nothing warns you.
-
-**Context:** From the 2026-10-23 eng review (decision D27). The OpenAI catalog is fetched with your key and filtered by a hard-coded regex. Start in `fetch_openai`: find the highest `gpt-N` among returned ids, keep its chat variants, skip non-chat ids (embeddings, audio, image). Add a test with a fake catalog containing gpt-6 and gpt-7 ids.
-
-**Effort:** S
-**Priority:** P3
-**Depends on:** None
-
 ## Research
 
 ### Run the research sources in parallel
@@ -27,5 +13,23 @@
 **Effort:** S
 **Priority:** P3
 **Depends on:** D22 merge (research.py into sources.py)
+
+## Release
+
+### Prove CI, Docker and the first release
+
+**What:** Push a branch and read the GitHub Actions run (lint, types, tests on Linux and Windows), build the Dockerfile and run `python -m postpilot status` inside it, then tag v0.1.0 with the changelog.
+
+**Why:** A public repo whose CI badge, Docker command and release have never been run looks worse to recruiters and strangers than any file layout does.
+
+**Pros:** Turns the biggest public risk into a green check; finds a broken workflow or image before a stranger does.
+
+**Cons:** About 1 hour of your time; needs Docker installed on the laptop; the push and the tag are yours to do.
+
+**Context:** From the 2026-11-12 eng review (decision D12, finding S4). `.github/workflows/ci.yml` has never run remotely and `Dockerfile` has never been built. Start with a push of a branch, then `docker build .` and `docker run --rm <image> python -m postpilot status`, then `git tag v0.1.0`.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** Your push; Docker installed
 
 ## Completed
