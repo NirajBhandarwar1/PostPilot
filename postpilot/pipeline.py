@@ -249,8 +249,15 @@ def generate_batch(signals: list[dict], history: list, voice: str, cat: factgate
         "also_hot": [t["name"] for t in fresh[3:8] if t["name"] not in {i["topic"] for i in kept}][:3],
         "short": len(kept) < 2,
         "stats": stats,
-        "writers": sorted(llm.USAGE),
+        **_writer_facts(),
     }
+
+
+def _writer_facts() -> dict:
+    """Which models answered and which provider was expected to write. Saved with the batch or plan, so the
+    'a backup model wrote this' note prints the same way every time, with no live model state at print time."""
+    primary = next(iter(llm.providers("writer")), None)
+    return {"writers": sorted(llm.USAGE), "expected": primary.name if primary else ""}
 
 
 def save_run(signals: list[dict], history: list, cat: factgate.Catalog) -> Path:
@@ -504,10 +511,11 @@ def make_plan(idea: dict, batch_id: int | None = None, build_no: int | None = No
     plan_checks = factgate.scan_text(plan_text, topic, pseudo_signals, cat, runs)
     # R1: setup commands are scanned like code inside render_brief, next to each command.
     checks = [*idea.get("check_before_posting", []), *post_checks, *kit.fact_checks]
+    facts = _writer_facts()
     doc = render_brief(idea, brief, kit, clean, (before[1], after[1], after[2]), report, checks, plan_checks,
-                       batch_id=batch_id, build_no=build_no)
+                       batch_id=batch_id, build_no=build_no, writers=facts["writers"], expected=facts["expected"])
     return {"brief": brief, "kit": kit, "doc": doc, "score": after[1],
-            "warnings": brief_warnings(idea, brief)}
+            "warnings": brief_warnings(idea, brief), **facts}
 
 
 def _plan_summary(brief) -> str:
@@ -770,7 +778,7 @@ def make_options(idea: dict) -> tuple[dict, list[str]]:
     result = {"options": kept, "recommended": rec or 1, "research": found, "evidence_pack": pack,
               "story_intro": raw.get("story_intro", ""),
               "recommended_reason": reason if rec else "Best remaining option after the fact check.",
-              "writers": sorted(llm.USAGE)}
+              **_writer_facts()}
     return result, dropped
 
 

@@ -38,6 +38,10 @@ def test_reports_may_use_the_pipeline_but_never_the_cli_file():
     assert "__main__" not in _deps("reports")
 
 
+def test_the_display_code_does_not_reach_into_the_model_layer():
+    assert "llm" not in _deps("render")
+
+
 def test_nothing_in_the_package_imports_the_cli_file():
     offenders = [p.name for p in PKG.rglob("*.py") if p.name != "__main__.py" and "__main__" in _imports(p)]
     assert offenders == []

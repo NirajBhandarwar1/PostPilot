@@ -251,11 +251,9 @@ def test_ratings_match_ideas_shown():
 
 # ---------- #14: the email says when a free fallback wrote the batch ----------
 
-def test_render_notes_fallback_writer(monkeypatch):
-    monkeypatch.setenv("WRITER_PROVIDERS", "openai,qwen")
-    monkeypatch.setenv("OPENAI_API_KEY", "o")
-    monkeypatch.setenv("GROQ_API_KEY", "g")
-    batch = {"ideas": [], "recommended": 1, "recommended_reason": "r", "writers": ["qwen:qwen/qwen3.8-27b"]}
+def test_render_notes_fallback_writer():
+    batch = {"ideas": [], "recommended": 1, "recommended_reason": "r", "writers": ["qwen:qwen/qwen3.8-27b"],
+             "expected": "openai"}          # both facts are saved when the batch is made (eng review R6)
     text = pipeline.render_ideas(1, batch)
     assert "backup model (qwen:qwen/qwen3.8-27b) wrote this batch" in text
     batch["writers"] = ["openai:gpt-6-sol"]

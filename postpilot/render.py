@@ -10,7 +10,7 @@ import textwrap
 import unicodedata
 from datetime import date
 
-from . import brain, factgate, llm
+from . import brain, factgate
 
 
 def slug(text: str) -> str:
@@ -82,10 +82,9 @@ def render_ideas(batch_id: int, batch: dict) -> str:
         out += ["-" * 60, *textwrap.wrap("Also hot (not picked): " + ", ".join(batch["also_hot"]), 88)]
     out += ["-" * 60, f"Why I pick #{batch['recommended']}: {batch['recommended_reason']}",
             "", "Optional: rate the ideas 1-5 to teach me your taste, e.g. '2 rate 4 5 2'."]
-    writers = batch.get("writers") or []
-    primary = next(iter(llm.providers("writer")), None)
-    if writers and primary and not any(w.startswith(primary.name + ":") for w in writers):
-        out.append(f"Note: {primary.name} did not answer (outage, no credit or daily cap), so a backup model "
+    writers, expected = batch.get("writers") or [], batch.get("expected") or ""     # saved when the batch was made
+    if writers and expected and not any(w.startswith(expected + ":") for w in writers):
+        out.append(f"Note: {expected} did not answer (outage, no credit or daily cap), so a backup model "
                    f"({', '.join(writers)}) wrote this batch. Expect weaker ideas.")
     return "\n".join(out)
 
@@ -337,9 +336,12 @@ def _model_tasks(tasks):
 
 
 def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks,
-                 batch_id: int | None = None, build_no: int | None = None) -> str:
+                 batch_id: int | None = None, build_no: int | None = None,
+                 writers: list[str] | None = None, expected: str = "") -> str:
     """BUILD.md: Part A for Cursor (fixed first/last steps around the model's tasks), Part B for you.
-    Every model-written string goes through _safe/_guard: Cursor acts on Part A (D3, D16)."""
+    Every model-written string goes through _safe/_guard: Cursor acts on Part A (D3, D16).
+    `writers` (the models that answered) and `expected` (the provider that should have written it) are the
+    facts saved when the plan was made, so a reprint shows the same backup-model note."""
     runs = idea.get("models_to_run", []) if brief.uses_models else []
     env = sorted({PROVIDER_API[k.split(":")[0]][1] for k in runs if k.split(":")[0] in PROVIDER_API})
     if any(k.startswith("cloudflare:") for k in runs):
@@ -372,10 +374,8 @@ def render_brief(idea, brief, kit, post: str, score, report, checks, plan_checks
          f"   > {CURSOR_PROMPT}",
          "4. Never paste keys into the chat; put them in `.env` when asked.",
          "5. When everything works, do Part B yourself.", ""]
-    writers = sorted(llm.USAGE)
-    primary = next(iter(llm.providers("writer")), None)
-    if writers and primary and not any(w.startswith(primary.name + ":") for w in writers):
-        warnings = [*warnings, f"written by a backup model ({', '.join(writers)}) because {primary.name} "
+    if writers and expected and not any(w.startswith(expected + ":") for w in writers):
+        warnings = [*warnings, f"written by a backup model ({', '.join(writers)}) because {expected} "
                     "was unavailable or over today's cap: expect a weaker plan; consider rebuilding tomorrow"]
     if warnings:
         L += ["> **Note from PostPilot:** " + "; ".join(warnings) + ".", ""]

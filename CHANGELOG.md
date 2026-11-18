@@ -10,6 +10,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - CI (lint, types, tests on Linux and Windows), pyproject, LICENSE, SECURITY, CONTRIBUTING.
 
 ### Changed
+- The "a backup model wrote this" note is printed from facts saved with the batch or plan (`writers`,
+  `expected`), not from live model state. Items saved before this change show no note.
 - Scouting runs daily instead of every three days.
 - Drafts and the voice profile now default to `./output` and `./voice.md` inside the project.
 - A provider that reports no credit or an exhausted daily quota is skipped at once for 30 minutes.
