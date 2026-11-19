@@ -14,6 +14,24 @@
 **Priority:** P3
 **Depends on:** D22 merge (research.py into sources.py)
 
+## Learning
+
+### Learn from your own posts
+
+**What:** Once you have posted for a while, save the text of each post you publish together with its results (impressions, reactions, inbound), and use your own best posts as the style examples instead of other people's.
+
+**Why:** Your own results are the only data that says what works for your profile and audience. `python -m postpilot report` already ranks formats and topics by inbound; it does not yet keep the post text.
+
+**Pros:** better examples that sound like you; no scraping needed once there are enough posts; ends the dependence on Apify.
+
+**Cons:** needs a few weeks of real posts before it means anything; `posted` must learn to store the final text (today it stores the link only).
+
+**Context:** From the 2026-11 discussion about style examples. `examples.py` reads any `examples.md`, so your own best posts can go straight into that file. Start in `__main__.py` (`posted`) and `db.py` (outcomes) to keep the text.
+
+**Effort:** M
+**Priority:** P2
+**Depends on:** at least 10 posts published and their numbers recorded
+
 ## Release
 
 ### Prove CI, Docker and the first release

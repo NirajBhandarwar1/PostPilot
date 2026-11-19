@@ -29,6 +29,13 @@ def no_apify(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_examples_file(tmp_path, monkeypatch):
+    """A developer's own examples.md must never reach a test prompt; tests that want one write their own."""
+    from postpilot import examples
+    monkeypatch.setattr(examples, "settings", types.SimpleNamespace(examples_file=tmp_path / "no-examples.md"))
+
+
+@pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     """Any real HTTP call in a test is a bug: fail loudly."""
     import urllib.request

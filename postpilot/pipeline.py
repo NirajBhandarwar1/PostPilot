@@ -19,7 +19,7 @@ import time
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-from . import brain, db, factgate, llm, mailer, ranking, sources
+from . import brain, db, examples, factgate, llm, mailer, ranking, sources
 from .config import ROOT, settings
 from .render import (
     CURSOR_PROMPT,
@@ -592,10 +592,30 @@ def _write_post(idea: dict, plan: str = ""):
     the free models: a rewrite that starts over often scores lower, so each rewrite edits the best
     text, and the loop stops after the first rewrite that does not beat it (no wasted tokens)."""
     best, feedback, previous, facts = None, "", "", _facts(idea)
+    picked = examples.chosen(idea)
+    ex = examples.for_prompt(idea, picked)   # '' without an examples file: then the prompt is exactly as before
+    short_ex = examples.for_prompt(idea, picked[:2], chars=350)    # a rewrite also carries the draft: keep Groq in reach
     for attempt in range(POST_TRIES):
+        use = short_ex if previous else ex
         kit = brain.build_post(idea, voice(), HOOKS, feedback=feedback, plan=plan, facts=facts,
-                               previous=previous)
+                               previous=previous, **({"examples": use} if use else {}))
         clean, report = humanizer.humanize(kit.post_draft, LEXICON)
+        dup = examples.shared_run(clean, picked)
+        if dup:                              # a phrase copied from an example never ships: rewrite it
+            log.info("post draft %d copies a phrase from an example (%r)", attempt + 1, dup)
+            if attempt + 1 < POST_TRIES:
+                previous = clean
+                feedback = (f"REWRITE: your draft repeats this phrase from a style example: \"{dup}\". "
+                            "Say it in your own words; keep everything else.")
+                continue
+            if best is not None:
+                break                        # out of tries: keep the earlier draft, which did not copy
+        nums = examples.copied_numbers(clean, picked, facts)
+        if nums and not dup and attempt + 1 < POST_TRIES:
+            previous = clean
+            feedback = (f"REWRITE: your draft uses numbers from a style example, not from the facts: {', '.join(nums)}. "
+                        "Remove them or use only numbers from the facts; keep everything else.")
+            continue
         before, after = _score(kit.post_draft), _score(clean)
         improved = best is None or after[1] > best[4][1]
         if improved:
@@ -617,6 +637,12 @@ def _write_post(idea: dict, plan: str = ""):
                     + ". Edit the draft: keep its facts, structure and placeholders; change the wording.")
         log.info("post draft %d scored %.0f (%s)%s", attempt + 1, after[1], after[2],
                  "; rewriting" if attempt + 1 < POST_TRIES else "; keeping the best")
+    if best is not None and examples.shared_run(best[1], picked):    # every draft copied: ship it, but say so
+        best[0].fact_checks = [*best[0].fact_checks,
+                               "The draft repeats a phrase from a style example: reword it before you post."]
+    if best is not None and (nums := examples.copied_numbers(best[1], picked, facts)):
+        best[0].fact_checks = [*best[0].fact_checks,
+                               f"Numbers copied from a style example, not your facts: {', '.join(nums)}. Verify or remove."]
     return best
 
 

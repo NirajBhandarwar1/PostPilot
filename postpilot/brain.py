@@ -559,6 +559,18 @@ Topic: {idea.get("topic", "")}
 {chr(10).join("- " + k for k in runs) or "(none: this post runs no models)"}"""
 
 
+EXAMPLE_RULES = (
+    "## Style examples: public posts that did well. Copy their structure, rhythm and length, never their words, "
+    "facts or claims. What wins in them: a hook of 20 words or fewer that states the setup (the result stays a placeholder); "
+    "the pain before the feature; one comparison against the simpler approach with both numbers "
+    "as {{placeholders}}; one specific failure with {{exact failing input}} in quotes; one sentence on test size "
+    "and one on when NOT to use it; if there is a list, 2-4 rules the reader would now follow, written as "
+    "instructions, never product features; numbers only from the facts above or written as placeholders; one short "
+    "paragraph on HOW it works; the ending is one rule a reader can apply elsewhere OR a question only a builder "
+    "could answer, never 'Thoughts?' or 'What do you think?'; no links in the body, the repo link goes in the first comment only; 900-1600 characters and at most 2 emoji. Here the "
+    "subject is the person's OWN build with results the person will measure, shared as what was learned, not a launch, never "
+    "someone else's work. No 'follow me' or repost requests, no 'gold mine' hype.")
+
 POST_STYLE = """Style targets (a human-writing scorer checks these, and recruiters feel them):
 - Concrete: at least 6 concrete details per 100 words: real numbers (counts, minutes, stars,
   views, points, sizes) and Capitalized names (the hot thing, GitHub, Python, Windows, company
@@ -569,7 +581,7 @@ POST_STYLE = """Style targets (a human-writing scorer checks these, and recruite
 
 
 def build_post(idea: dict, voice: str, hooks: dict, feedback: str = "", plan: str = "",
-               facts: str = "", previous: str = "") -> PostKit:
+               facts: str = "", previous: str = "", examples: str = "") -> PostKit:
     hook_detail = [{k: h[k] for k in ("name", "template", "example", "trap")}
                    for h in hooks["hooks"] if h["id"] in idea.get("hook_formula_ids", [])]
     picked = {k: idea[k] for k in ("title", "why_hot", "role_angle", "build_plan", "hook_options", "visual")
@@ -588,6 +600,7 @@ About them: {voice[:2500] or "(no profile: write plainly, first person, confiden
 {("## Real numbers you may cite (from the research; quote them exactly)" + chr(10) + _untrusted(facts)) if facts else ""}
 
 {POST_STYLE}
+{(EXAMPLE_RULES + chr(10) + _untrusted(examples)) if examples else ""}
 {("## The draft to edit (return an improved version of THIS text, not a new post)" + chr(10) + previous) if previous else ""}
 {feedback}
 Write:
