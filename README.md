@@ -70,8 +70,9 @@ Posts are written for the person described in `voice.md` and the `PERSONA_*` lin
 | `python -m postpilot check` | check email replies once |
 | `python -m postpilot status` | setup check and recent batches |
 | `python -m postpilot precommit` | secret check before you commit (blocks .env, real key values, key shapes) |
-| `python -m postpilot eval [N]` | replay the last N saved runs: fact-check failure rate and unverified claims per idea |
 | `python -m postpilot eval history [N]` | replay the last N saved scouts: fact-check failure rate and unverified claims per idea |
+| `python -m postpilot examples fetch [--author URL] [--query TEXT] [--force]` | one-time pull of LinkedIn posts into your private `examples.md` (free Apify plan, see [LinkedIn research](#linkedin-research-and-style-examples-optional-free)) |
+| `python -m postpilot examples show` | how many style examples you have and where the file is |
 | `python -m postpilot doctor` | live check: how many signals each trend source returns right now, and whether each backup writer model answers |
 | `python -m postpilot posted 5 <url> [--build N]` | after you publish: record the LinkedIn link for batch #5 (latest build unless `--build`; BUILD.md's "After you post" shows the exact command) |
 | `python -m postpilot inbound 5 --recruiters 2 --founders 1` | record who reached out after that post (goes to the build you recorded as posted) |

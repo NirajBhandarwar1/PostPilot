@@ -160,3 +160,25 @@ def test_precommit_command_exits_1_on_a_key_and_never_prints_it(tmp_path):
     done = _precommit(bad)
     assert done.returncode == 1 and "BLOCKED" in done.stdout
     assert planted not in done.stdout + done.stderr
+
+
+def test_examples_fetch_passes_the_authors_the_searches_and_force(monkeypatch):
+    calls = []
+    monkeypatch.setattr("postpilot.examples.fetch", lambda *a, **k: calls.append((a, k)) or "done")
+    run_cli(monkeypatch, "examples", "fetch")
+    run_cli(monkeypatch, "examples", "fetch", "--author", "https://www.linkedin.com/in/a", "--author",
+            "https://www.linkedin.com/in/b", "--query", "q1", "--force", "--add")
+    assert calls == [((None, None, False), {"add": False}),
+                     ((["q1"], ["https://www.linkedin.com/in/a", "https://www.linkedin.com/in/b"], True), {"add": True})]
+
+
+def test_examples_show_prints_where_they_are(monkeypatch, capsys):
+    monkeypatch.setattr("postpilot.examples.state", lambda: "7 posts in somewhere")
+    run_cli(monkeypatch, "examples", "show")
+    assert "7 posts in somewhere" in capsys.readouterr().out
+
+
+def test_status_shows_the_linkedin_search_and_the_examples(monkeypatch, capsys):
+    run_cli(monkeypatch, "status")
+    out = capsys.readouterr().out
+    assert "LinkedIn posts : off (set APIFY_TOKEN" in out and "Style examples : none (" in out

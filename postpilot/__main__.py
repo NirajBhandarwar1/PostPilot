@@ -11,6 +11,7 @@
   python -m postpilot precommit        check files for secrets before you commit
   python -m postpilot eval run         score the current prompts on the golden stories (also: capture, replay, list, history)
   python -m postpilot doctor           show how many signals each live source returns now
+  python -m postpilot examples fetch   one-time pull of LinkedIn posts into examples.md (free Apify plan; see README)
 
   After you publish a post (track what actually brings recruiters and founders):
   python -m postpilot posted 4 <url>   record the LinkedIn link for batch #4
@@ -28,7 +29,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import db, llm, mailer, pipeline, reports
+from . import db, examples, llm, mailer, pipeline, reports
 from .config import ROOT, settings
 
 
@@ -57,6 +58,9 @@ def status() -> None:
     print(f"Voice profile  : {ok(bool(pipeline.voice()))}  ({settings.voice_file})")
     print(f"Output folder  : {settings.output_dir}")
     print(f"Cycle          : every {settings.cycle_days:g} days, replies checked every {settings.check_minutes:g} min")
+    from . import sources
+    print(f"LinkedIn posts : {sources.apify_state()}")
+    print(f"Style examples : {examples.state()}")
     print(f"Loop           : {pipeline.loop_line()}")
     print(f"Last scout     : {db.get_meta('last_scout_at', 'never')}")
     rates = db.llm_pass_rates(7)
@@ -111,13 +115,14 @@ def _need_batch(batch_id: int):
 NOT_SECRET = re.compile(
     r"^(LLM_PROVIDERS|WRITER_PROVIDERS|(?:SCOUT|IDEAS|OPTIONS|BRIEF|POST)_PROVIDERS|\w+_MODEL|(?:\w+_)?REASONING_EFFORT|USER_SETUP|CURRENT_MODELS|CYCLE_DAYS|"
     r"CHECK_MINUTES|RADAR_DAYS|OUTPUT_DIR|VOICE_FILE|OLLAMA_URL|CUSTOM_BASE_URL|CUSTOM_STRICT|"
-    r"OPENAI_DAILY_TOKENS|CLOUDFLARE_DAILY_NEURONS|GROQ_DAILY_TOKENS|PAID_EXPERIMENTS)$")
+    r"OPENAI_DAILY_TOKENS|CLOUDFLARE_DAILY_NEURONS|GROQ_DAILY_TOKENS|PAID_EXPERIMENTS|"
+    r"APIFY_MAX_POSTS_PER_MONTH|APIFY_POSTS_PER_QUERY|EXAMPLES_FILE)$")
 
 # Known key shapes: a prefix plus a long run of key characters (bare prefixes like "sk-" or
 # "hf_" would also match ordinary words such as "risk-" or "hf_api").
 KEY_SHAPES = re.compile(
     r"(sk-or-v1-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}"
-    r"|hf_[A-Za-z0-9]{20,}|cfut_[A-Za-z0-9_]{20,})")
+    r"|hf_[A-Za-z0-9]{20,}|cfut_[A-Za-z0-9_]{20,}|apify_api_[A-Za-z0-9]{20,})")
 
 SKIP_DIRS = {".venv", ".git", "data", ".gstack", "__pycache__"}
 
@@ -250,6 +255,15 @@ def main() -> None:
     eh = ev.add_parser("history", help="fact-check stats over the last N saved scouts")
     eh.add_argument("n", nargs="?", type=int, default=3)
     sub.add_parser("doctor")
+    ex = sub.add_parser("examples").add_subparsers(dest="examples_cmd", required=True)
+    exf = ex.add_parser("fetch", help="one-time pull of LinkedIn posts into examples.md (free Apify plan only)")
+    exf.add_argument("--author", action="append",
+                     help="a LinkedIn profile or company URL whose posts you want as examples (repeatable)")
+    exf.add_argument("--query", action="append",
+                     help="a search (repeatable); with no --author and no --query, 5 general AI-builder searches run")
+    exf.add_argument("--force", action="store_true", help="replace an existing examples.md")
+    exf.add_argument("--add", action="store_true", help="add the new posts to an existing examples.md")
+    ex.add_parser("show", help="how many examples there are and where the file is")
     po = sub.add_parser("posted")
     po.add_argument("batch", type=int)
     po.add_argument("url")
@@ -302,6 +316,9 @@ def _run(args) -> None:
         else:
             from .evals import runner
             sys.exit(runner.cli(args))
+    elif args.cmd == "examples":
+        print(examples.fetch(args.query, args.author, args.force, add=args.add) if args.examples_cmd == "fetch"
+              else examples.state())
     elif args.cmd == "doctor":
         sys.exit(doctor())
     elif args.cmd == "posted":
