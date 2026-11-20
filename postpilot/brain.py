@@ -94,6 +94,10 @@ class BuildOption(BaseModel):
     needs: list[str]             # keys, accounts, hardware
     risk: str                    # the most likely way it fails, and the fallback
     hook: str                    # one opening line, under 140 characters, no made-up results
+    baseline: str = ""           # cheapest comparison: no model, rules only, or the cheapest model
+    pass_rule: str = ""          # the pass/fail rule, written before running
+    runs: int = 0                # how many inputs/runs the result rests on (2 or more)
+    limit: str = ""              # scope of the claim (inputs, language, size); no outcomes
 
 
 class BuildOptions(BaseModel):
@@ -139,7 +143,7 @@ class CursorBrief(BaseModel):
     stack: list[str]             # "Python 3.12 + FastAPI: small, fast to build" (tech + why)
     file_tree: list[FileSpec]
     setup_commands: list[str]    # extra non-interactive PowerShell commands the person reviews and runs (git clone, npm install)
-    tasks: list[BuildTask]       # 6-10 steps, each small enough for one Cursor turn
+    tasks: list[BuildTask]       # 4-7 steps, each small enough for one Cursor turn
     tests: list[str]             # automated tests to write (pytest), one line each
     demo_data: str               # what sample input to create and how (no real personal data)
     readme_outline: list[str]    # README sections, the repo is public
@@ -409,68 +413,53 @@ Formats:
 
 
 OPTION_RULES = """Rules for the options:
-- Learn from the research: the videos with the most views and the repos with the most stars show
-  what people actually want to see about this thing (e.g. "run it on one gaming PC", "it does
-  X for $0", "I used it to build Y in minutes"). Every option rides one of those proven
-  patterns (inspired_by: name the exact video, repo or thread, with its views/stars) and adds
-  a clear edge (your_edge): the honest measurement, the production angle, or the real build
-  the viral piece skipped. Never just redo what is already viral.
-- At least 2 options ride the TOP pattern (the most-viewed videos / most-starred repos) head-on,
-  in a legitimate way. Example: if "clone any software with it" is what went viral, clone an
-  OPEN-SOURCE app (or your own) from its build only, then diff the clone against the real
-  source; if "run it on one gaming PC" went viral, run it on this laptop and measure it.
-- At least ONE option is a pure "look what I built" demo (kind = demo-app): a small, useful or
-  fun app built WITH the hot thing that people want to try or share. No eval, no scoreboard, no
-  "does it really work" framing: the post is the thing working (a 30-60 second screen
-  recording, a live link, a repo people can run). Think "I built a <cool app> with <hot thing>
-  in an evening", e.g. a tool that does something surprising, saves time, or looks great.
-  It should solve a real problem a startup or developer has, so it doubles as a portfolio piece.
-  The demo must impress someone who has never heard of the tool. It is NOT a test, replacement or
-  reconstruction of something the person wrote themselves; it produces something new and useful
-  (e.g. "I used REA to turn an open-source app's hidden feature into a standalone CLI",
-  "I built a voice note -> PR description tool on DeepSeek V4.1 Flash").
-- At least ONE option is a public GitHub repo (kind = open-source-tool) that other developers
-  will star, fork or rerun: a benchmark, a starter kit, a plugin, a CLI. The post links to it,
-  so readers visit the person's GitHub. Name the repo and say in one line why people would star it.
+- Learn from the research: the most-viewed videos and most-starred repos show what people want to
+  see. Every option rides one proven pattern (inspired_by: the exact video, repo or thread, with
+  its views/stars) and adds a clear edge (your_edge): the honest measurement, the production
+  angle, or the real build the viral piece skipped. Never just redo what is already viral.
+- At least 2 options ride the TOP pattern head-on, legitimately: clone an OPEN-SOURCE app (or your
+  own) from its build only, then diff it against the source; run it on this laptop and measure it.
+- At least ONE option is a pure "look what I built" demo (kind = demo-app): a small, useful or fun
+  app built WITH the hot thing that people want to try or share. No eval, no scoreboard: the post
+  is the thing working (a 30-60 second recording, a live link, a repo people can run). It must
+  impress someone who has never heard of the tool, solve a real problem a startup or developer
+  has, and produce something new, not test or replace something the person wrote.
+- At least ONE option is a public GitHub repo (kind = open-source-tool) that developers will star,
+  fork or rerun: a benchmark, a starter kit, a plugin, a CLI or, when the hot thing fits, a
+  skill, plugin or MCP server for a coding agent (Claude Code, Codex) others install with one
+  command. The post links to it. Name the repo and say in one line why people would star it.
 - Use the hot thing for what its official docs say it is for, on inputs where it adds real value
-  the old way could not: a coding model on real code bugs, a vision model on messy real images, an
-  agent tool on a task that needs its special ability, a fast/cheap model where speed or cost
-  matters. Never point it at something trivially solved without it.
-- Prefer options people can SEE: a demo app, a before/after, a live scoreboard, a screen
-  recording of something working. A table of test results alone is weak.
-- 4 options (3 if the story is thin, 5 if it is very rich), each a DIFFERENT kind (pick from
-  demo-app, face-off, open-source-tool, stress-test, replicate, deep-dive; no two the same), all
-  using the story's handle itself (the hot model, the viral repo, the product).
+  the old way could not. Never point it at something trivially solved without it.
+- Prefer options people can SEE: a demo app, a before/after, a live scoreboard, a recording.
+- 4 options (3 if the story is thin, 5 if rich), each a DIFFERENT kind (demo-app, face-off,
+  open-source-tool, stress-test, replicate, deep-dive), all using the story's handle itself.
 - Never build clones of paid or closed software, piracy, license bypasses, or reverse engineering
-  of apps you do not own. Use your own or open-source targets, even if viral videos do not.
-- Say each setup caveat once, in risk. Do not repeat "only if the docs support it" everywhere;
-  the person will read the docs.
+  of apps you do not own. Use your own or open-source targets.
 - Spread effort: at least one easy option under 45 minutes, at least one ambitious option
-  (medium or hard, up to about 3 hours) that would genuinely impress a technical founder.
+  (medium or hard, up to about 3 hours) that would impress a technical founder.
 - Be concrete: name the tasks, the dataset or inputs, the models, the metric, the output.
-  "Test it on some prompts" is not an option; "20 failing pytest bugs from real repos, graded by
-  whether the tests pass, with latency and cost per fix" is.
-- stand_out: why this beats the obvious post 100 other people will write about the same story.
-- why_hiring_cares: the specific skill it proves (evals, agents, cost control, shipping speed,
-  infra, security, product judgment), as a founder would put it.
-- minutes and difficulty are honest for one engineer on a laptop; difficulty_why says why.
-- models_to_run only from the list; keep each option under about $3 in API cost.
-- hook: names the hot thing, sets up the test or build, results stay {{result}}.
+- stand_out: why this beats the obvious post 100 others will write. why_hiring_cares: the specific
+  skill it proves, as a founder would put it. minutes and difficulty are honest for one engineer
+  on a laptop. models_to_run only from the list; keep each option under about $3 in API cost.
+- hook: names the hot thing and states the setup; the result stays {{result}}.
 - The email shows only story_intro, short_title, what_it_is, what_you_show, why_hired, twist,
-  difficulty and minutes, so they must be clear on their own to someone reading on a phone who
-  has never heard of the tool:
-  story_intro: 2 sentences: what the hot thing is in plain words + the proof it's hot (stars,
-  views, points from the research).
-  what_it_is: 2 sentences: what you make, and how the hot thing is used in it. Explain any tool
-  name or technical term in a few words ("a command-line tool, i.e. a program you run by typing").
-  No unexplained jargon: no "fixtures", "harness", "owned CLI", "reconstruction", "held-out".
-  what_you_show: the concrete thing people see (a 45-second video of X, a chart of Y, a repo link).
-  why_hired: what a startup founder concludes about the person, plain words.
-  twist: what this adds that the viral video/repo did not.
-  No caveats in these fields; risks go in risk.
+  difficulty and minutes, so each is clear on its own to a phone reader who has never heard of the
+  tool, in plain words with no jargon ("fixtures", "harness", "held-out"):
+  story_intro: 2 sentences: what the hot thing is + proof it's hot (stars, views, points).
+  what_it_is: 2 sentences: what you make and how the hot thing is used; explain any tool name.
+  what_you_show: the concrete thing people see. why_hired: what a founder concludes about the
+  person. twist: what this adds that the viral piece did not.
+- risk = how the setup fails and the fallback (keys, hardware, install). limit = the scope of the
+  claim (inputs, language, size), no outcomes or numbers beyond the setup. Say each caveat once,
+  in one of them, never repeat one in the other; no caveats in titles, hooks or what_it_is.
+- Believable beats impressive. Every option that is not a demo-app REQUIRES baseline (the cheapest
+  comparison: no model, rules only, or the cheapest model), pass_rule (pass/fail rule, written
+  before running), runs (an integer: the total number of inputs or runs, at least 2) and limit.
+  A demo-app: runs = the total number of inputs (an integer), pass_rule = works on {{N}} of <runs>
+  <inputs> (e.g. works on {{N}} of 20 repos), baseline and limit = empty string. The post shares
+  what was learned; it does not sell.
 - Write recommended_reason first (one short sentence), then recommended = the 1-based number of
-  the best option. Prefer the demo-app or the open-source-tool (what people see and star) unless
-  another option is clearly stronger."""
+  the best option. Prefer the demo-app or open-source-tool unless another is clearly stronger."""
 
 
 class EvidenceFact(BaseModel):
@@ -635,7 +624,7 @@ def build_brief(idea: dict, research_text: str = "", docs_text: str = "", docs_f
     opt = idea.get("option") or {}
     picked = {k: opt[k] for k in ("title", "kind", "what_you_build", "what_it_is", "post_shows",
                                   "what_you_show", "steps_preview", "needs", "risk", "twist", "inspired_by",
-                                  "minutes") if opt.get(k)}
+                                  "minutes", "baseline", "pass_rule", "runs", "limit") if opt.get(k)}
     if not picked:
         picked = {k: idea[k] for k in ("title", "build_plan", "visual", "needs") if idea.get(k)}
     handle = idea.get("handle") or idea.get("topic", "")
@@ -673,6 +662,8 @@ Rules:
   requirements.txt with your `requirements` (+ pytest) installed, .gitignore and .env.example.
   Recording the demo and publishing on GitHub are added automatically at the end. Do NOT repeat
   any of that or write record/demo/publish/push steps. Your tasks are the build: 4-7, in order.
+  The FIRST task after setup writes the pass rule, and the baseline if the build has a baseline, to
+  RESULTS.md, before anything runs. The build writes results.json with the sample sizes.
 - Run Python as `{VENV_PY}` and tests ONLY as `{TEST_CMD}` (pytest, files under tests/), in
   every step and done_when.
 - who=you for anything Cursor cannot do: downloads from a web page, accounts, keys, setting up
@@ -704,6 +695,7 @@ Rules:
   seconds of the video (the wow moment first). It must look polished in a screen recording.
 - demo_script: 5-8 shots for a 30-60 second recording; reuse visual_spec's colors and type, no second look.
 - readme_outline: for a public repo people may star: what it is, demo GIF at docs/demo.gif,
-  quick start, how it works, results ({{{{placeholders}}}} until measured), credits/links."""
+  quick start, how it works, results ({{{{placeholders}}}} until measured), Limits, What broke
+  ({{{{failing input}}}} until measured), credits/links."""
     return llm.chat_json(SYSTEM, prompt, CursorBrief, max_tokens=8000, role="brief")
 

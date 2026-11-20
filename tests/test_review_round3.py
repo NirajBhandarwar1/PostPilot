@@ -4,6 +4,14 @@
 from postpilot import brain, db, examples, pipeline, sources
 from tests.test_examples import BODY, file, long_item  # noqa: F401  (file: a fixture that points at a temp examples.md)
 
+# ---------- no new option kind: a skill or plugin is a flavour of open-source-tool ----------
+
+def test_there_is_no_agent_skill_kind_to_fight_the_required_kinds():
+    assert "agent-skill" not in brain.OPTION_RULES and "agent-skill" not in brain.BuildOption.model_fields["kind"].metadata.__repr__()
+    assert "skill, plugin or MCP server for a coding agent" in brain.OPTION_RULES
+    assert pipeline.REQUIRED_KINDS == ("demo-app", "open-source-tool")
+
+
 # ---------- the examples file ----------
 
 def test_one_post_without_a_link_does_not_hide_the_next_one(file):

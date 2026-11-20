@@ -657,6 +657,8 @@ def render_options_full(batch_id: int, choice: int, idea: dict, res: dict) -> st
                if o.get("models_to_run") else []),
             f"   YOU NEED: {', '.join(o.get('needs', [])) or 'nothing extra'}",
             f"   RISK: {o['risk']}",
+            *[f"   {lab}: {o[k]}" for lab, k in (("BASELINE", "baseline"), ("PASS RULE", "pass_rule"),
+                                                ("RUNS", "runs"), ("LIMIT", "limit")) if o.get(k)],
             f"   OPENING LINE: {o['hook']}",
             *( ["   Check before you post:", *[f"     ! {c}" for c in o["check_before_posting"]]]
                if o.get("check_before_posting") else []),
