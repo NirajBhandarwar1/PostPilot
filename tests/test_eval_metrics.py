@@ -8,12 +8,13 @@ from postpilot.evals import metrics
 
 POST = (
     "Most agent demos hide the boring part: what happens when the file is bad.\n\n"
-    "I wired a small FastAPI service to a model and fed it broken uploads on purpose. "
+    "I wired a small FastAPI service to a model and fed it 10 broken files on purpose. "
     "The first run crashed in {{seconds}} seconds. After adding a clear error message, "
     "the same upload now returns a readable reason in {{ms}} ms.\n\n"
     "What I took from it: validate at the edge, log the reason, and keep the model call small. "
     "The repo has the code, the tests and a short demo clip so you can try the same bad files yourself "
     "and compare the messages you get. It runs locally with no paid keys, which makes it easy to share.\n\n"
+    "It is one run on 10 broken files, so read it as an early result, not a benchmark.\n\n"
     "What is the worst file you have thrown at a model?\n\n#AI #Python #LLM"
 )
 
@@ -35,7 +36,7 @@ python -m venv .venv
 
 ### Step 2 \U0001F916: Build the API  (~40 min)
 
-Write `app.py` with one route.
+Write `app.py` with one route. Pass rule: 3 of 5 bad uploads return a readable reason.
 
 **Done when:** `pytest -q` passes.
 
@@ -82,7 +83,9 @@ def _opt(kind="demo-app", **over):
 
 
 def _options(**over):
-    return {"options": [_opt("demo-app"), _opt("open-source-tool"), _opt("face-off")], "recommended": 1, **over}
+    scored = {"what_you_build": "a rules-only baseline vs the model on 20 tasks, scored by pass rate"}
+    return {"options": [_opt("demo-app"), _opt("open-source-tool", **scored), _opt("face-off", **scored)],
+            "recommended": 1, **over}
 
 
 def _plan(doc=DOC, **over):
@@ -189,9 +192,8 @@ def test_post_is_cut_out_of_its_fence():
 @pytest.mark.parametrize("post, expected", [
     ("Short.", "post_length_ok"),
     ("x" * 200 + "\n\n" + POST, "post_hook_short"),
-    (POST.replace("{{seconds}}", "4").replace("{{ms}}", "30"), "post_uses_placeholders"),
-    (POST.replace("{{ms}}", "30 percent faster, a 40% drop"), "post_no_fabricated_numbers"),
-    (POST.replace("What is the worst file you have thrown at a model?", "That is all."), "post_ends_with_question"),
+    (POST.replace("{{ms}}", "a 73% drop"), "post_numbers_traceable"),
+    (POST.replace("What is the worst file you have thrown at a model?", "Thoughts?"), "post_ends_with_question"),
     (POST + " #A #B #C #D", "post_hashtag_count"),
     (POST.replace("The first run", "It took me 3 hours. The first run"), "post_no_invented_claims"),
 ])
@@ -232,3 +234,103 @@ def test_the_post_bar_is_the_pipelines_post_target():
     """The eval's other limits are its own and may be stricter; this one number must not drift (review R1)."""
     from postpilot import pipeline
     assert metrics.SCORE_GOOD == pipeline.POST_TARGET
+
+
+# ---------- hostile-review posts ----------
+
+PACK = {"facts": [{"text": "Claude Sonnet scored 72.7% on SWE-bench Verified", "source": "web"}]}
+ENTS = ["SWE-bench", "Claude Sonnet"]
+LIMITS = "Limits: one run, one seed, synthetic bugs I wrote myself. Not a benchmark."
+
+GOOD_POSTS = [
+    "I gave three free models the same 20 broken Python files and asked each for a fix.\n\n"
+    "Llama fixed {{a}} of 20. Qwen fixed {{b}} of 20. Gemma fixed {{c}} of 20.\n\n"
+    "My baseline, a plain ruff --fix, solved {{d}} of 20 with zero tokens.\n\n" + LIMITS + "\n\n"
+    "The repo with the files and the runner is in the first comment. Which model would you add next?\n\n#Python",
+    "Rate limits ate my weekend. I built a router that sends each request to whichever provider has quota.\n\n"
+    "I replayed 200 requests through it. Before: {{x}} of 200 failed with rate-limit errors. After: {{y}} of 200.\n\n"
+    "Latency went up, p50 from {{a}} ms to {{b}} ms, because the fallback is slower.\n\n"
+    "This is a single run on my own traffic, so take it as an early result.\n\n"
+    "If you run on free tiers, measure your error rate before you add a second provider.",
+    "I took 12 real bugs from my issue tracker and let Claude Sonnet try each one once.\n\n"
+    "The leaderboard says it scored 72.7% on SWE-bench Verified. I wanted to see that on my own repo.\n\n"
+    "It solved {{n}} of 12. The rest looked plausible and failed tests.\n\n"
+    "Small sample, one try each. Don't read it as a ranking.\n\n"
+    "Next time a leaderboard number lands, try it on your own bugs before you switch.",
+]
+OPT = {"runs": "20 files, 200 requests, 12 bugs"}
+BAD_POSTS = {
+    "post_numbers_traceable": [
+        "I tested my agent on 5 tasks.\n\nIt solved 3/3 hard ones and 2 of 2 easy ones. Accuracy 100%. "
+        "4x faster than before.\n\nOne run, so limits apply.\n\nTry it.",
+        "I ran 50 tasks through my new agent setup.\n\nIt solved 47 of them, which is 94%. My old setup managed 61%.\n\n"
+        "Cost dropped to $0.02 per task.\n\nWhat do you think?",
+    ],
+    "post_results_have_n": [
+        "The model hit 9/10 on my test and it cut cost by 70% versus GPT-4. It solved 5 of them.\n\nLimits: one run.\n\n"
+        "Which would you pick?"
+    ],
+    "post_states_limit": ["I ran 20 tasks. It solved 5 of 20.\n\nThere are limits to everything, but this felt big.\n\nWhy?"],
+    "post_ends_with_question": ["I ran 20 tasks. It solved 5 of 20. One run.\n\nKeep building!",
+                                "I ran 20 tasks. It solved 5 of 20. One run.\n\nTry it."],
+}
+
+
+def _post_plan(post, **over):
+    return _plan(DOC.replace(POST, post), **{"evidence_pack": PACK, "entities": ENTS, "option": OPT, **over})
+
+
+@pytest.mark.parametrize("post", GOOD_POSTS)
+def test_honest_posts_pass_the_honesty_checks(post):
+    honest = {"post_numbers_traceable", "post_results_have_n", "post_states_limit", "post_ends_with_question"}
+    assert _failed(metrics.evaluate_post(_post_plan(post))) & honest == set()
+
+
+@pytest.mark.parametrize("check, post", [(c, p) for c, ps in BAD_POSTS.items() for p in ps])
+def test_gaming_posts_fail_the_check_they_game(check, post):
+    assert check in _failed(metrics.evaluate_post(_post_plan(post)))
+
+
+def test_a_number_only_the_build_doc_contains_is_not_traceable():
+    post = "I ran 20 tasks.\n\nStep 4 took 40 seconds and it solved 15 of 20. One run.\n\nWhich would you try?"
+    assert "post_numbers_traceable" in _failed(metrics.evaluate_post(_post_plan(post)))
+
+
+def test_a_number_from_the_option_is_traceable():
+    post = "I ran 20 tasks.\n\nIt solved 5 of 20. One run.\n\nWhich would you try?"
+    plan = _post_plan(post, option={"pass_rule": "pass if 5 of 20 are fixed"})
+    assert "post_numbers_traceable" not in _failed(metrics.evaluate_post(plan))
+
+
+def test_a_count_after_the_result_does_not_clear_it():
+    post = "It solved 5 of them.\n\nThat was on 20 tasks. One run.\n\nWhich would you try?"
+    assert "post_results_have_n" in _failed(metrics.evaluate_post(_post_plan(post)))
+
+
+def test_options_checks_are_not_fooled_by_loose_words():
+    loose = {"what_you_build": "build a plain page in 90 minutes, no costly setup, passing thoughts"}
+    res = _options()
+    res["options"][1].update(loose)
+    assert {"options_have_baseline", "options_sized_and_scored"} <= _failed(metrics.evaluate_options(res, []))
+
+
+def test_pass_rule_needs_a_colon():
+    doc = DOC.replace("Pass rule: 3 of 5", "The threshold is 3 of 5")
+    assert "plan_pass_rule_first" in _failed(metrics.evaluate_plan(_plan(doc)))
+
+
+# ---------- vendored detector local edits ----------
+
+def test_detector_sentences_ignore_urls_versions_and_abbreviations():
+    from postpilot.vendor import detect
+    t = "See e.g. the docs at https://github.com/a/b.c and v1.2.3 for more detail. Next one here."
+    assert len(detect.sentences(t)) == 2
+
+
+@pytest.mark.parametrize("head", ["**Bold head**\n" * 3, "---\n" * 3, "-40% cost on a\n-35% cost on b\n-38% cost on c\n"])
+def test_detector_bullets_are_real_list_markers_only(head):
+    from postpilot.vendor import detect
+    lex = {"words": [], "phrases": [], "structures": []}
+    assert "uniform-bullets" not in detect.check_voice(head + "I've you we our " * 10, lex)[1]
+    real = "- one two three\n- four five six\n- seven eight nine\n"
+    assert "uniform-bullets" in detect.check_voice(real + "I've you we our " * 10, lex)[1]

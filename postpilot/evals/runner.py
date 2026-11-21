@@ -11,15 +11,18 @@ Nothing here saves a batch, writes a build folder or sends email. The only datab
 """
 
 import argparse
+import contextlib
 import json
+import os
 import re
 import time
+import types
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .. import db, llm, pipeline
+from .. import db, examples, llm, pipeline, sources
 from . import metrics
 from .metrics import Check
 
@@ -70,9 +73,14 @@ def capture(batch_id: int, idea_no: int, option_no: int, name: str) -> Path:
     opts = listing.get("options", [])
     if not 1 <= option_no <= len(opts):
         raise ValueError(f"Idea {idea_no} of batch #{batch_id} has options 1-{len(opts)}")
+    # Golden files are committed: strangers' LinkedIn posts (and facts taken from them) stay out.
+    research = {k: v for k, v in (listing.get("research") or {}).items() if k != "linkedin"}
+    pack = listing.get("evidence_pack")
+    if isinstance(pack, dict):
+        pack = {**pack, "facts": [f for f in pack.get("facts", [])
+                                  if not (isinstance(f, dict) and f.get("source") == "linkedin")]}
     story = _scrub({"name": name, "captured_at": db.now_iso(), "idea": ideas[idea_no - 1],
-                    "option": opts[option_no - 1], "research": listing.get("research"),
-                    "evidence_pack": listing.get("evidence_pack")})
+                    "option": opts[option_no - 1], "research": research, "evidence_pack": pack})
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
     path = GOLDEN_DIR / f"{name}.json"
     path.write_text(json.dumps(story, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -123,6 +131,39 @@ def _merge_usage(total: dict, snap: dict) -> None:
             t[k] += u.get(k, 0)
 
 
+def FROZEN_EXAMPLES() -> Path:
+    """Looked up on every call so a changed GOLDEN_DIR is followed."""
+    return GOLDEN_DIR / "examples.frozen.md"
+
+
+def _frozen_examples() -> Path:
+    """A gitignored copy of examples.md made on first use, so edits to your live file cannot move eval scores
+    while the prompts still carry real examples. Missing source: the path simply does not exist (no examples)."""
+    frozen = FROZEN_EXAMPLES() if callable(FROZEN_EXAMPLES) else FROZEN_EXAMPLES
+    if not frozen.exists() and examples.path().exists():
+        frozen.parent.mkdir(parents=True, exist_ok=True)
+        tmp = frozen.with_name(frozen.name + ".tmp")
+        tmp.write_bytes(examples.path().read_bytes())
+        os.replace(tmp, frozen)                      # atomic: a crash never leaves a half-written copy
+    if frozen.exists():
+        stamp = datetime.fromtimestamp(frozen.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        print(f"using frozen examples from {stamp}; delete it to refresh", flush=True)
+    return frozen
+
+
+@contextlib.contextmanager
+def _offline_extras():
+    """An eval measures the prompts, so it must not spend Apify credit on a live LinkedIn search, and it reads a
+    FROZEN copy of examples.md so scores stay comparable between runs."""
+    saved = (sources.linkedin_posts, examples.settings)
+    sources.linkedin_posts = lambda *a, **k: []
+    examples.settings = types.SimpleNamespace(examples_file=_frozen_examples())  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        sources.linkedin_posts, examples.settings = saved
+
+
 def _run_story(story: dict) -> dict:
     """Run one golden story through the current pipeline. Stage failures are recorded, not raised."""
     idea = story["idea"]
@@ -140,6 +181,8 @@ def _run_story(story: dict) -> dict:
                 picked = pipeline.idea_from_option(idea, story["option"], story.get("research"),
                                                     story.get("evidence_pack"))
                 outputs["plan"] = _plain(pipeline.make_plan(picked))
+                outputs["plan"]["evidence_pack"] = story.get("evidence_pack") or picked.get("evidence_pack")
+                outputs["plan"]["option"] = story.get("option")
         except Exception as e:      # one failing stage must not hide the other one's result
             errors[stage] = f"{type(e).__name__}: {str(e)[:300]}"
         # Each stage resets llm.USAGE, so read it right after the stage.
@@ -172,11 +215,12 @@ def run_eval(names: list[str] | None = None, stories: list[dict] | None = None,
     chosen = stories if stories is not None else golden_stories(names)
     chosen = chosen[:max_stories]
     run: dict = {"started_at": datetime.now(UTC).isoformat(timespec="seconds"), "stories": {},
-                 "skipped": []}
+                 "skipped": [], "metrics_version": metrics.METRICS_VERSION}
     for i, story in enumerate(chosen):
         name = story.get("name", f"story-{i + 1}")
         print(f"running {name} ({i + 1}/{len(chosen)}) ...", flush=True)
-        result = _run_story(story)
+        with _offline_extras():
+            result = _run_story(story)
         run["stories"][name] = result
         blown = [e for e in result["errors"].values() if USED_UP.search(e)]
         if blown and i + 1 < len(chosen):
@@ -211,13 +255,15 @@ def load_run(path_or_name: str | Path | None = None) -> dict | None:
 def compare(prev: dict | None, cur: dict) -> dict:
     """Deltas between two runs over the stories both contain: per stage, overall, and per check.
     A check that passed before and fails now is a regression; the reverse is a fix."""
-    out: dict = {"overall": None, "stages": {}, "regressions": [], "fixed": []}
+    out: dict = {"overall": None, "stages": {}, "regressions": [], "fixed": [], "version_changed": False}
     if not prev:
         return out
     common = [n for n in cur["stories"] if n in prev["stories"]]
     if not common:
         return out
-    for stage in STAGES:
+    # Scores from different metric versions measure different things: only the per-check changes are shown.
+    out["version_changed"] = prev.get("metrics_version") != cur.get("metrics_version")
+    for stage in () if out["version_changed"] else STAGES:
         a = [prev["stories"][n]["summary"]["by_stage"][stage] for n in common
              if stage in prev["stories"][n]["summary"]["by_stage"]]
         b = [cur["stories"][n]["summary"]["by_stage"][stage] for n in common
@@ -226,7 +272,8 @@ def compare(prev: dict | None, cur: dict) -> dict:
             out["stages"][stage] = round(sum(b) / len(b) - sum(a) / len(a), 1)
     old = sum(prev["stories"][n]["summary"]["score"] for n in common) / len(common)
     new = sum(cur["stories"][n]["summary"]["score"] for n in common) / len(common)
-    out["overall"] = round(new - old, 1)
+    if not out["version_changed"]:
+        out["overall"] = round(new - old, 1)
     for n in common:
         was = {c["name"]: c for c in prev["stories"][n]["checks"]}
         for c in cur["stories"][n]["checks"]:
@@ -272,7 +319,9 @@ def render(run: dict, diff: dict | None = None) -> str:
         for stage, err in s["errors"].items():
             lines.append(f"\n{name}: {stage} stage failed: {err}")
     if diff is not None:
-        if diff["overall"] is None:
+        if diff.get("version_changed"):
+            lines.append("\nThe metrics changed since the previous run, so overall scores are not compared.")
+        elif diff["overall"] is None:
             lines.append("\nNo previous run to compare with.")
         else:
             by_stage = ", ".join(f"{k} {v:+.1f}" for k, v in diff["stages"].items())
@@ -292,10 +341,12 @@ def replay(path_or_name: str | Path | None = None) -> dict:
     old = load_run(path_or_name)
     if old is None:
         raise ValueError("No saved run to replay. Run `python -m postpilot eval run` first.")
-    new = {"started_at": old.get("started_at", ""), "skipped": [], "stories": {}}
-    for name, s in old["stories"].items():
-        checks, summary = _score(s.get("outputs", {}), s.get("errors", {}))
-        new["stories"][name] = {**s, "checks": [asdict(c) for c in checks], "summary": summary}
+    new = {"started_at": old.get("started_at", ""), "skipped": [], "stories": {},
+           "metrics_version": metrics.METRICS_VERSION}
+    with _offline_extras():          # the copy check reads examples: same frozen file as a live run, no Apify
+        for name, s in old["stories"].items():
+            checks, summary = _score(s.get("outputs", {}), s.get("errors", {}))
+            new["stories"][name] = {**s, "checks": [asdict(c) for c in checks], "summary": summary}
     new["overall"] = _overall(new["stories"])
     print(render(new, compare(old, new)))
     return new

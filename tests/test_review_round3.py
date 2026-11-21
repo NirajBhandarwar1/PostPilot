@@ -2,6 +2,7 @@
 
 
 from postpilot import brain, db, examples, pipeline, sources
+from postpilot.evals import runner
 from tests.test_examples import BODY, file, long_item  # noqa: F401  (file: a fixture that points at a temp examples.md)
 
 # ---------- no new option kind: a skill or plugin is a flavour of open-source-tool ----------
@@ -16,6 +17,20 @@ def test_the_example_rules_do_not_invite_made_up_numbers_or_a_link_ending():
     r = brain.EXAMPLE_RULES
     assert "placeholders" in r and "900-1600 characters" in r and "first comment" in r and "HOW it works" in r
     assert "at least 3 numbers" not in r and "ends with the link" not in r
+
+
+# ---------- strangers' posts stay out of the tracked golden files ----------
+
+def test_capture_drops_linkedin_posts_and_facts_taken_from_them(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "GOLDEN_DIR", tmp_path / "golden")
+    listing = {"options": [{"title": "Demo", "kind": "demo-app"}],
+               "research": {"hn": [{"title": "an HN thread"}], "linkedin": [{"title": "stranger", "text": "secret words"}]},
+               "evidence_pack": {"facts": [{"fact": "a stranger's claim", "source": "linkedin"},
+                                           {"fact": "5,000 stars", "source": "github"}]}}
+    bid = db.add_batch({"ideas": [{"title": "t"}], "options": {"1": listing}}, "options_sent")
+    text = runner.capture(bid, 1, 1, "story").read_text(encoding="utf-8")
+    assert "secret words" not in text and "stranger" not in text and "linkedin" not in text
+    assert "an HN thread" in text and "5,000 stars" in text
 
 
 # ---------- the examples file ----------

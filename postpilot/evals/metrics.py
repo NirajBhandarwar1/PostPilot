@@ -21,8 +21,10 @@ TIME_SLACK = 1.6                    # the pipeline warns at 1.5x; the eval fails
 MAX_DOC_CHARS = 25_000
 POST_MIN, POST_MAX = 600, 1800
 HOOK_MAX = 140
-MAX_HASHTAGS = 5
+MAX_HASHTAGS = 3                    # same as the post prompt in brain.py
 SCORE_PASS, SCORE_GOOD = 70, 75
+# Bump when a check changes what it accepts: runs scored by different versions are not comparable overall.
+METRICS_VERSION = 2
 
 # A warning that tells the person to look, not that the plan is wrong. Anything else counts as a defect.
 INFORMATIONAL_WARNINGS = ("need to check", "no step uses", "unverified claim")
@@ -115,7 +117,36 @@ def evaluate_options(res: dict, dropped: list[str]) -> list[Check]:
             bad = ["-"]
         return Check("options_name_a_source", not bad, f"no inspired_by on option(s) {', '.join(bad)}", 1.0, S)
 
-    return _guarded(S, [_c_options_min_count, _c_options_has_demo_and_repo, _c_options_complete_fields,
+    def _field(o: dict, k: str) -> str:
+        v = o.get(k)
+        return " ".join(map(str, v)) if isinstance(v, (list, tuple)) else str(v or "")
+
+    def _c_options_have_baseline() -> Check:
+        pat = re.compile(r"(?i)baseline|control (?:group|run)|\bvs\b|versus|without (it|the)|no-model|rules-only|"
+                         r"plain (?:prompt|model|regex|script)|cheapest")
+        bad = []
+        for n, o in enumerate(opts, 1):
+            if o.get("kind") == "demo-app" or str(o.get("baseline") or "").strip():
+                continue
+            if not pat.search(" ".join(_field(o, k) for k in ("what_you_build", "steps_preview", "your_edge"))):
+                bad.append(str(n))
+        return Check("options_have_baseline", not bad, f"no baseline in option(s) {', '.join(bad)}", 1.0, S)
+
+    def _c_options_sized_and_scored() -> Check:
+        from .. import factgate
+        metric = re.compile(r"(?i)\bpass(?:es|ed)?\b|accuracy|\bF1\b|latency|\bcost\b|\$|\bms\b|solved")
+        bad = []
+        for n, o in enumerate(opts, 1):
+            if o.get("kind") == "demo-app":
+                continue
+            txt = " ".join(_field(o, k) for k in ("what_you_build", "steps_preview", "your_edge", "pass_rule", "runs",
+                                                  "limit", "title", "hook"))
+            sized = re.sub(r"(?i)\b\d+\s*(?:minutes?|mins?|hours?|hrs?)\b", " ", txt)   # effort is not a sample size
+            if not factgate.SETUP_COUNT.search(sized.lower()) or not metric.search(txt):
+                bad.append(str(n))
+        return Check("options_sized_and_scored", not bad, f"no size or metric in option(s) {', '.join(bad)}", 1.0, S)
+
+    return _guarded(S, [_c_options_have_baseline, _c_options_sized_and_scored, _c_options_min_count, _c_options_has_demo_and_repo, _c_options_complete_fields,
                         _c_options_recommended_valid, _c_options_few_dropped, _c_options_no_model_warnings,
                         _c_options_effort_in_range, _c_options_name_a_source])
 
@@ -291,7 +322,16 @@ def evaluate_plan(plan: dict) -> list[Check]:
         return Check("plan_third_party_gated", not bad, f"step(s) {', '.join(bad)} fetch/run third-party code "
                      "but are not marked for the human" if bad else "", 2.0, S)
 
-    return _guarded(S, [_c_plan_has_parts, _c_plan_step_count, _c_plan_human_share, _c_plan_time_adds_up,
+    def _c_plan_pass_rule_first() -> Check:
+        rule = re.compile(r"(?i)(?:pass rule|success criteria)\**\s*:")
+        runs = re.compile(r"(?i)\b(?:run|runs|running|score|scoring|evaluate|benchmark|measure)\b")
+        r = next((i for i, st in enumerate(steps) if rule.search(st.title + "\n" + st.body)), None)
+        x = next((i for i, st in enumerate(steps) if st.n > 1 and runs.search(st.title)), None)
+        ok = r is not None and (x is None or r < x)
+        return Check("plan_pass_rule_first", ok, "no step states the pass rule" if r is None
+                     else "the pass rule comes after the step that runs the experiment" if not ok else "", 1.0, S)
+
+    return _guarded(S, [_c_plan_pass_rule_first, _c_plan_has_parts, _c_plan_step_count, _c_plan_human_share, _c_plan_time_adds_up,
                         _c_plan_steps_have_done_when, _c_plan_no_old_openai_call, _c_plan_no_prefixed_model_ids,
                         _c_plan_no_npm_in_pip, _c_plan_ascii_commands, _c_plan_fences_clean,
                         _c_plan_no_duplicate_steps, _c_plan_warnings_clean, _c_plan_size_ok,
@@ -322,6 +362,20 @@ def _post_text(doc: str) -> str | None:
 
 _HASHTAG = re.compile(r"(?<![\w&])#[A-Za-z]\w*")
 _DISCUSS = re.compile(r"\?|\b(?:let me know|tell me|curious|thoughts|what do you think|drop a comment|reply)\b", re.I)
+
+
+_NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+_HAS_N = re.compile(r"\d+\s*/\s*\d+|\bof\s+\d+|\bout of\s+\d+", re.I)
+_LIMIT = re.compile(r"(?i)\blimits?\s*:|limitation|caveat|one run|single run|one seed|synthetic|"
+                    r"small (?:test|sample)|not a benchmark|haven't proven|early result")
+_GENERIC_END = re.compile(r"(?i)^(?:any |your )?(?:thoughts|what do you think|what are your thoughts|do you agree|agree)\W*$")
+_TAKEAWAY = re.compile(r"(?i)\b(?:rule of thumb|takeaway|lesson|next time|before you|if you)\b")
+_PCT_X = re.compile(r"\d[\d,]*(?:\.\d+)?\s*(?:%|x\b)")
+_OPTION_FIELDS = ("title", "what_you_build", "baseline", "pass_rule", "runs", "limit")
+
+
+def _norm_num(x: str) -> str:
+    return x.replace(",", "").rstrip(".")
 
 
 def evaluate_post(plan: dict) -> list[Check]:
@@ -367,22 +421,72 @@ def evaluate_post(plan: dict) -> list[Check]:
 
     def _c_post_uses_placeholders() -> Check:
         n = len(re.findall(r"\{\{[^}]+\}\}", body))
-        return _need_post("post_uses_placeholders") or Check("post_uses_placeholders", n >= 1,
-                                                             f"{n} placeholder(s), want at least 1", 1.0, S)
+        # Informational (weight 0): an unfinished post must not earn points for its blanks.
+        return _need_post("post_uses_placeholders", 0.0) or Check("post_uses_placeholders", True,
+                                                                  f"{n} placeholder(s)", 0.0, S)
 
-    def _c_post_no_fabricated_numbers() -> Check:
-        hits = re.findall(r"\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*x\s+(?:faster|cheaper|better|more)\b", bare, re.I)
-        return _need_post("post_no_fabricated_numbers") or Check(
-            "post_no_fabricated_numbers", not hits, f"made-up figure outside a placeholder: {hits[0]}" if hits else "",
-            1.0, S)
+    def _c_post_numbers_traceable() -> Check:
+        from .. import factgate
+        if (c := _need_post("post_numbers_traceable")):
+            return c
+        low = _HASHTAG.sub(" ", bare).lower()
+        low = re.sub(r"https?://\S+", " ", low)
+        ents = plan.get("entities") if isinstance(plan, dict) else None
+        for nm in sorted({str(e).lower() for e in (ents or []) if e}, key=len, reverse=True):
+            low = low.replace(nm, " ")
+        low = re.sub(r"\b[a-z]+[\w.-]*\d[\w.-]*\b", " ", low)
+        low = factgate.SETUP_COUNT.sub(" ", low)
+        # Only the evidence and the option's own fields count: the BUILD.md is full of step numbers and minutes.
+        pack = str((plan.get("evidence_pack") if isinstance(plan, dict) else "") or "")
+        opt = plan.get("option") if isinstance(plan, dict) else None
+        opt_txt = " ".join(str(opt.get(k) or "") for k in _OPTION_FIELDS) if isinstance(opt, dict) else ""
+        have = {_norm_num(x) for x in _NUM.findall(pack + " " + opt_txt)}
+        ev_have = {_norm_num(x) for x in _NUM.findall(pack)}      # a % or Nx figure must come from the evidence
+        miss = [x for x in _PCT_X.findall(low) if _norm_num(_NUM.findall(x)[0]) not in ev_have]
+        miss += [x for x in _NUM.findall(low) if _norm_num(x) not in have]
+        return Check("post_numbers_traceable", not miss,
+                     f"number not in the evidence or plan: {miss[0]}" if miss else "", 1.0, S)
 
     def _c_post_ends_with_question() -> Check:
+        # Name kept for old result files. Passes on a question, a takeaway/rule, or a single link; fails on filler.
         if (c := _need_post("post_ends_with_question")):
             return c
         paras = [p for p in re.split(r"\n\s*\n", body) if _HASHTAG.sub("", p).strip()]
-        last = _HASHTAG.sub("", paras[-1]) if paras else ""
-        ok = bool(_DISCUSS.search(last))
-        return Check("post_ends_with_question", ok, "" if ok else "the last paragraph asks nothing", 1.0, S)
+        last = _HASHTAG.sub("", paras[-1]).strip() if paras else ""
+        tail = re.split(r"(?<=[.!?])\s+|\n", last)[-1].strip()
+        if _GENERIC_END.match(tail):
+            return Check("post_ends_with_question", False, f"generic ending: {tail[:40]}", 1.0, S)
+        ok = ("?" in last or len(re.findall(r"https?://\S+", last)) == 1 or bool(_TAKEAWAY.search(last))
+              or len(tail.split()) >= 6)
+        return Check("post_ends_with_question", ok, "" if ok else "ends on no question, takeaway or link", 1.0, S)
+
+    def _c_post_results_have_n() -> Check:
+        if (c := _need_post("post_results_have_n")):
+            return c
+        from .. import factgate
+        seen_n = False          # a sample size stated earlier, in a sentence that is not itself a result
+        bad = []
+        for sent in re.split(r"(?<=[.!?])\s+|\n+", body):
+            is_result = factgate.RESULT_SHAPE.search(sent.lower()) or "%" in sent or "{{" in sent
+            if is_result:
+                if not (_HAS_N.search(sent) or seen_n):
+                    bad.append(sent.strip())
+            elif factgate.SETUP_COUNT.search(sent.lower()):
+                seen_n = True
+        return Check("post_results_have_n", not bad,
+                     f"result without a sample size: {bad[0][:70]}" if bad else "", 1.0, S)
+
+    def _c_post_states_limit() -> Check:
+        ok = bool(post and _LIMIT.search(body))
+        return _need_post("post_states_limit") or Check("post_states_limit", ok,
+                                                        "" if ok else "no limit of the test stated", 1.0, S)
+
+    def _c_post_not_copied_from_examples() -> Check:
+        if (c := _need_post("post_not_copied_from_examples", 2.0)):
+            return c
+        from .. import examples  # late: pulls config
+        run = examples.shared_run(body, examples.load())
+        return Check("post_not_copied_from_examples", not run, f'copies an example: "{run[:60]}"' if run else "", 2.0, S)
 
     def _c_post_hashtag_count() -> Check:
         n = len(_HASHTAG.findall(body))
@@ -395,8 +499,9 @@ def evaluate_post(plan: dict) -> list[Check]:
         return Check("post_first_comment", ok, "" if ok else "no first-comment section", 1.0, S)
 
     return _guarded(S, [_c_post_human_score, _c_post_human_score_good, _c_post_hook_short, _c_post_length_ok,
-                        _c_post_no_invented_claims, _c_post_uses_placeholders, _c_post_no_fabricated_numbers,
-                        _c_post_ends_with_question, _c_post_hashtag_count, _c_post_first_comment])
+                        _c_post_no_invented_claims, _c_post_uses_placeholders, _c_post_numbers_traceable,
+                        _c_post_ends_with_question, _c_post_hashtag_count, _c_post_first_comment,
+                        _c_post_results_have_n, _c_post_states_limit, _c_post_not_copied_from_examples])
 
 
 # ---------- summary ----------

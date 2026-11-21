@@ -261,3 +261,36 @@ def test_cli_run_prints_no_quota_line_when_nothing_was_used(folders, fake_pipeli
     (runner.GOLDEN_DIR / "one.json").write_text(json.dumps(_story()), encoding="utf-8")
     runner.cli(_args())
     assert "Free quota today" not in capsys.readouterr().out
+
+
+# ---------- hostile-review fixes ----------
+
+def test_frozen_copy_follows_golden_dir_and_is_written_atomically(folders, eval_dirs_in_tmp, monkeypatch, capsys):
+    from postpilot import examples
+    src = folders / "examples.md"
+    src.write_text("live examples", encoding="utf-8")
+    monkeypatch.setattr(examples, "path", lambda: src)
+    monkeypatch.setattr(runner, "FROZEN_EXAMPLES", eval_dirs_in_tmp)     # the real function, not the test's tmp one
+    frozen = runner._frozen_examples()
+    assert frozen == runner.GOLDEN_DIR / "examples.frozen.md" and frozen.read_text(encoding="utf-8") == "live examples"
+    assert not list(runner.GOLDEN_DIR.glob("*.tmp"))
+    assert "using frozen examples from" in capsys.readouterr().out
+    src.write_text("changed", encoding="utf-8")
+    assert runner._frozen_examples().read_text(encoding="utf-8") == "live examples"
+
+
+def test_replay_runs_with_the_offline_extras(folders, fake_pipeline, monkeypatch):
+    runner.save_run(runner.run_eval(stories=[_story()]))
+    seen = []
+    monkeypatch.setattr(runner, "_score", lambda o, e: seen.append(runner.sources.linkedin_posts("x")) or ([], {"score": 0, "by_stage": {}}))
+    runner.replay()
+    assert seen == [[]]
+
+
+def test_compare_skips_overall_when_metric_versions_differ(folders, fake_pipeline):
+    good = runner.run_eval(stories=[_story()])
+    assert good["metrics_version"] == runner.metrics.METRICS_VERSION
+    old = {**good, "metrics_version": 0}
+    assert runner.compare(old, good)["overall"] is None
+    assert runner.compare(old, good)["version_changed"] is True
+    assert runner.compare(good, good)["overall"] == 0.0

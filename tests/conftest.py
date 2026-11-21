@@ -48,3 +48,14 @@ def no_network(monkeypatch):
     def no_dns(*a, **k):                  # no real DNS lookups either (offline, fast)
         raise OSError("test tried to resolve a host name")
     monkeypatch.setattr(socket, "getaddrinfo", no_dns)
+
+
+@pytest.fixture(autouse=True)
+def eval_dirs_in_tmp(tmp_path, monkeypatch):
+    """The eval runner must never write the real evals/golden (frozen examples copy) or evals/results.
+    Returns the real FROZEN_EXAMPLES function for the one test that checks it."""
+    from postpilot.evals import runner
+    real = runner.FROZEN_EXAMPLES
+    monkeypatch.setattr(runner, "FROZEN_EXAMPLES", lambda: tmp_path / "examples.frozen.md")
+    monkeypatch.setattr(runner, "RESULTS_DIR", tmp_path / "eval-results")
+    return real

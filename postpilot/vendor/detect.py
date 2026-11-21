@@ -21,6 +21,9 @@ Usage
   python3 detect.py before.txt after.txt      # compare two drafts
 """
 
+# LOCAL EDITS to the vendored file (PostPilot):
+#  - sentences(): URLs, "e.g.", "i.e." and version tokens like v1.2.3 no longer split a sentence.
+#  - voice bullets: only real list markers followed by a space count (not **Bold** heads, "---" or "-40%").
 import argparse
 import json
 import os
@@ -33,6 +36,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LEX = os.path.join(HERE, "slop.json")
 
 SENT_RE = re.compile(r"[^.!?\n]+[.!?]*")
+# Dots that do not end a sentence: URLs and version tokens become one word, "e.g." / "i.e." lose their dots.
+NO_SPLIT = re.compile(r"https?://\S+|\bv\d+(?:\.\d+)+\b|\b\d+\.\d+\.\d+\b")
+DOTTED_ABBR = re.compile(r"\b(?:e\.g|i\.e)\.", re.IGNORECASE)
 WORD_RE = re.compile(r"[A-Za-z']+")
 CONTRACTIONS = re.compile(r"\b\w+'(?:s|t|re|ve|ll|d|m)\b", re.IGNORECASE)
 PRONOUNS = re.compile(r"\b(i|me|my|mine|we|us|our|you|your)\b", re.IGNORECASE)
@@ -52,7 +58,10 @@ def scale(value, human, machine):
 
 
 def sentences(text):
-    return [s.strip() for s in SENT_RE.findall(text) if len(s.split()) > 2]
+    # 1-2 word sentences ("Not great.") are the short beats humans use, so they count for variety.
+    text = NO_SPLIT.sub(" link ", text)
+    text = DOTTED_ABBR.sub(lambda m: m.group().replace(".", ""), text)
+    return [s.strip() for s in SENT_RE.findall(text) if WORD_RE.search(s)]
 
 
 def words(text):
@@ -136,7 +145,7 @@ def check_voice(text, lex):
         if n:
             tells += n
             names.append(s["id"])
-    bullets = [len(b.split()) for b in re.findall(r"(?m)^\s*[-*•]\s+(.+)$", text)]
+    bullets = [len(b.split()) for b in re.findall(r"(?m)^\s*(?:[-*•→➜👉]|->)[ \t]+(?!\*)(.+)$", text)]
     uniform = (len(bullets) >= 3 and statistics.pstdev(bullets) < 1.6)
     score = (scale(contractions, human=3.0, machine=0.0) * 0.35
              + scale(person, human=8.0, machine=1.0) * 0.35

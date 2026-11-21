@@ -982,7 +982,7 @@ Approval readiness: PASS (R1 D7, R2 D8, R3 D9, R4 D10, R5 D11, O1 D12, O2 D13, O
 - Strict JSON schema to every provider: `llm.strict_schema` + `providers()`; carries the new `models_to_run` enum (D13).
 - Outdated-name pattern: `brain.STALE`, moved into factgate as the single copy.
 - SQLite store: `db.py` meta table holds the 7-day catalog/HF cache (D6).
-- Humanizer + detector: `vendor/humanize.py`, `vendor/detect.py`, unchanged.
+- Humanizer + detector: `vendor/humanize.py`, `vendor/detect.py`, unchanged apart from local edits (sentence split ignores URLs, e.g., i.e. and v1.2.3; bullets need a real list marker), noted at the top of the file.
 - Reply parsing: `mailer.parse_choice`, extended for `2 rate 4 5 2` under the D11 regression contract.
 
 ### Failure modes (new paths)

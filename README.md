@@ -133,6 +133,23 @@ Every idea is checked before you see it (`postpilot/factgate.py`):
 
 Design and review decisions: `docs/designs/postpilot-content-engine.md`.
 
+## Evaluation
+
+Change a prompt or a model and the tests still pass, so quality needs its own check (see [ADR-006](docs/adr/006-evaluation-layer.md)).
+
+- **Golden stories** (`evals/golden/`): saved public stories. `eval run` pushes each through the options,
+  BUILD.md and post prompts and scores the result with plain rules: right number of options, a demo and a repo,
+  4 to 10 steps, a "Done when" on every step, no removed OpenAI call, no npm package in `pip install`,
+  no invented claim or figure in the post, a short hook, a closing question. It prints a table and what
+  changed since the last run. A story costs 2 to 3 model calls on the free tiers. If a provider runs out of
+  quota the run says so and is not saved.
+- **Add a story:** `python -m postpilot eval capture BATCH IDEA OPTION NAME` (emails and key shapes are removed).
+- **Offline:** `eval replay` scores a saved run again with the current rules, with no model call.
+- **Real use:** `eval live` shows how often you answer, your ratings, how often a fallback model ran and
+  how many people reached out per post.
+
+There is no model judge: free models judge poorly and spend the quota the product needs.
+
 ## Development
 
 ```

@@ -14,3 +14,4 @@ output/
 voice.md
 evals/results/
 examples.md
+evals/golden/examples.frozen.md

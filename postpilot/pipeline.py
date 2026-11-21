@@ -530,9 +530,8 @@ POST_TRIES = 3           # first draft + up to 2 rewrites
 
 
 def _score(text: str):
-    """Score as the finished post will read: {{placeholders}} become real results (numbers) once
-    the person fills them in, so they count as a number, not as nothing."""
-    return detector.run(re.sub(r"\{\{[^}]*\}\}", "12", text), LEXICON)
+    """Score the post with {{placeholders}} counting as nothing: an unfilled slot is no concrete detail."""
+    return detector.run(re.sub(r"\{\{[^}]*\}\}", " ", text), LEXICON)
 
 
 USE_EVIDENCE_PACK = True      # off = the old raw-digest prompts (the size benchmark compares both)
