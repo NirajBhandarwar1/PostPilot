@@ -13,12 +13,30 @@ def test_option_rules_require_believability_fields():
         assert w in r
 
 
+def test_post_prompts_rules():
+    for text in (brain.EXAMPLE_RULES, brain.POST_STYLE):
+        assert "Thoughts?" in text and "NOT" in text
+        assert "arrow bullets" not in text and "one command" not in text
+    assert "2-4 rules" in brain.EXAMPLE_RULES and "2-4 rules" in brain.POST_STYLE
+
+
 def test_brief_prompt_mentions_results_files(monkeypatch):
     seen = {}
     monkeypatch.setattr(brain.llm, "chat_json", lambda s, p, *a, **k: seen.setdefault("p", p))
     brain.build_brief({"title": "t"})
     assert "RESULTS.md" in seen["p"] and "results.json" in seen["p"]
     assert "What broke" in seen["p"] and "Limits" in seen["p"]
+
+
+def test_placeholder_budget_covers_required_unknowns(monkeypatch):
+    import re
+    seen = {}
+    monkeypatch.setattr(brain.llm, "chat_json", lambda s, p, *a, **k: seen.setdefault("p", p))
+    brain.build_post({"title": "t"}, "", {"hooks": []})
+    m = re.search(r"At most (\d+) \{\{placeholders", seen["p"])
+    unknowns = ["comparison A", "comparison B", "failing input", "results", "time", "link"]
+    assert m and int(m.group(1)) >= len(unknowns)
+    assert "ALWAYS {{placeholders}}" in brain.POST_STYLE
 
 
 def test_hook_rules_never_ask_for_a_result():

@@ -566,7 +566,15 @@ POST_STYLE = """Style targets (a human-writing scorer checks these, and recruite
   and model names). Write names in normal case, not in `code` and not lowercase.
 - Rhythm: vary sentence length hard. Several 2-6 word sentences ("It didn't." "Twenty inputs.")
   next to a few long 20-30 word ones. Never three same-length sentences in a row.
-- Voice: first person, contractions (I'm, didn't, here's), plain words, one opinion."""
+- Voice: first person, contractions (I'm, didn't, here's), plain words, one opinion.
+- Believable, not selling: include one comparison against the simpler approach (rules-only, no model,
+  or the cheapest model) with both numbers ({{comparison numbers}}), one specific failure with
+  {{exact failing input}} in quotes, one sentence on test size, one on when NOT to use it. If you list
+  things, list 2-4 rules the reader would now follow, written as instructions, never product features.
+- Ending: one rule a reader can apply elsewhere OR one question only a builder could answer. Never
+  'Thoughts?' or 'What do you think?'. No links in the body: the repo link goes in the first comment only.
+- Comparison numbers, the failing input and the results are ALWAYS {{placeholders}}; they never
+  count toward concreteness."""
 
 
 def build_post(idea: dict, voice: str, hooks: dict, feedback: str = "", plan: str = "",
@@ -593,9 +601,9 @@ About them: {voice[:2500] or "(no profile: write plainly, first person, confiden
 {("## The draft to edit (return an improved version of THIS text, not a new post)" + chr(10) + previous) if previous else ""}
 {feedback}
 Write:
-- post_draft: the full LinkedIn post, 900-1300 characters. At most 4 {{{{placeholders}}}}, each
+- post_draft: the full LinkedIn post, 900-1600 characters. At most 6 {{{{placeholders}}}}, each
   for a real result or detail only the person can fill in; the rest is written out. Line 1 = hook. Short paragraphs with
-  a blank line between. A turn near the end. Close with ONE specific question. Every result they
+  a blank line between. A turn near the end. Close with ONE rule or ONE builder-only question. Every result they
   have not produced yet, and every detail of their own product or work, is a {{{{placeholder}}}}.
   State news facts only if a source above says them. Never claim anything about their product,
   team, employer or customers ("we're testing it on our admin panel"), or any time, cost or result

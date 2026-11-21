@@ -12,6 +12,12 @@ def test_there_is_no_agent_skill_kind_to_fight_the_required_kinds():
     assert pipeline.REQUIRED_KINDS == ("demo-app", "open-source-tool")
 
 
+def test_the_example_rules_do_not_invite_made_up_numbers_or_a_link_ending():
+    r = brain.EXAMPLE_RULES
+    assert "placeholders" in r and "900-1600 characters" in r and "first comment" in r and "HOW it works" in r
+    assert "at least 3 numbers" not in r and "ends with the link" not in r
+
+
 # ---------- the examples file ----------
 
 def test_one_post_without_a_link_does_not_hide_the_next_one(file):
