@@ -1,5 +1,7 @@
 """Fixes from the final Opus review: kinds, golden files, matching, token budget, bonus limits, copy warnings."""
 
+import json
+from email.utils import formatdate
 
 from postpilot import brain, db, examples, pipeline, sources
 from postpilot.evals import runner
@@ -31,6 +33,42 @@ def test_capture_drops_linkedin_posts_and_facts_taken_from_them(tmp_path, monkey
     text = runner.capture(bid, 1, 1, "story").read_text(encoding="utf-8")
     assert "secret words" not in text and "stranger" not in text and "linkedin" not in text
     assert "an HN thread" in text and "5,000 stars" in text
+
+
+# ---------- Hacker News matching keeps plurals and versions ----------
+
+def test_plurals_and_version_numbers_still_count_as_ai_words():
+    for title in ("Why LLMs still cannot count", "Qwen3.6 is out", "GPTs are everywhere", "New MCP servers"):
+        assert sources.AI_WORDS.search(title), title
+    assert not sources.AI_WORDS.search("Paper Airplanes")
+
+
+def test_a_plural_story_survives_the_hacker_news_query(monkeypatch):
+    body = json.dumps({"hits": [{"objectID": "1", "title": "Why LLMs still cannot count", "points": 400},
+                                {"objectID": "2", "title": "Paper Airplanes", "points": 900}]}).encode()
+    monkeypatch.setattr(sources, "_get", lambda url, headers=None: body)
+    titles = [s["title"] for s in sources.hacker_news()]
+    assert titles == ["Why LLMs still cannot count"]
+
+
+# ---------- engineering blogs: only posts about AI ----------
+
+def test_a_blog_post_that_is_not_about_ai_is_left_out(monkeypatch):
+    when = formatdate(usegmt=True)
+    rss = ("<rss><channel>"
+           f"<item><title>Kubernetes upgrade notes</title><link>https://x/1</link><pubDate>{when}</pubDate></item>"
+           f"<item><title>Our new AI agent platform</title><link>https://x/2</link><pubDate>{when}</pubDate></item>"
+           "</channel></rss>").encode()
+    monkeypatch.setattr(sources, "_get", lambda url, headers=None: rss)
+    eng = [s["title"] for s in sources.news() if s["kind"] == "Eng blog"]
+    assert any(t == "Cloudflare blog: Our new AI agent platform" for t in eng)
+    assert not any(t.startswith(("Cloudflare blog", "GitHub blog", "Meta Engineering")) and "Kubernetes" in t for t in eng)
+    assert any(t.startswith("OpenAI news") and "Kubernetes" in t for t in eng)         # OpenAI's own news is all AI
+
+
+def test_every_signal_title_is_cut_for_the_free_token_limit():
+    line = brain._compact_signals([{"kind": "News", "title": "x" * 200, "detail": "d"}])
+    assert len(line) < 120
 
 
 # ---------- the examples file ----------

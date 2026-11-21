@@ -34,6 +34,14 @@ def heat(topic: dict, signals: list[dict], ids: list[int] | None = None) -> tupl
             pts = min(15.0, 3 * math.log2(eng / 1000 + 1)) if eng else 1.0   # 5k -> ~8, 30k+ -> 15
         elif kind.startswith("Hugging Face"):
             pts = 5.0 if rank < 3 else 3.0 if rank < 10 else 1.5
+        elif kind == "GitHub new tools":                     # new coding-agent repos: smaller than the trending page
+            pts = min(8.0, 2 * math.log2(eng / 100 + 1)) if eng else 1.0
+        elif kind == "Paper":                                # HF Daily Papers upvotes: 100 -> ~7
+            pts = min(10.0, 3 * math.log2(eng / 50 + 1)) if eng else 2.0
+        elif kind == "HN lab post":                          # a lab's own post that HN upvoted
+            pts = min(16.0, 4 * math.log2(eng / 100 + 1)) if eng else 3.0
+        elif kind == "Eng blog":                             # a company's own announcement
+            pts = 3.0
         else:                                                # plain news coverage
             news_pts += 1.0
             continue

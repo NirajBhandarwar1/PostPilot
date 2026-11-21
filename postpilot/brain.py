@@ -223,19 +223,38 @@ def _untrusted(text: str) -> str:
     return f"<untrusted_data>\n{text}\n</untrusted_data>"
 
 
+def _top_signal_ids(signals: list[dict], limit: int = 140, per_kind: int = 4) -> list[int]:
+    """Original indices (link ids must still point into the full list) of the `limit` strongest signals: the best
+    few of every source first so none is crowded out, then the rest by points."""
+    order = sorted(range(len(signals)), key=lambda i: (-(signals[i].get("engagement") or 0), signals[i].get("rank", 0)))
+    taken: dict[str, int] = {}
+    keep: list[int] = []
+    for i in order:
+        k = signals[i]["kind"]
+        if taken.get(k, 0) < per_kind:
+            taken[k] = taken.get(k, 0) + 1
+            keep.append(i)
+    chosen = set(keep)
+    keep += [i for i in order if i not in chosen]
+    return sorted(keep[:limit])
+
+
 def _compact_signals(signals: list[dict]) -> str:
-    return "\n".join(f"{i}. [{c['kind']}] {c['title']} ({c['detail']})" for i, c in enumerate(signals))
+    return "\n".join(f"{i}. [{signals[i]['kind']}] {signals[i]['title'][:90]} ({signals[i]['detail']})"
+                     for i in _top_signal_ids(signals))
 
 
 def find_topics(signals: list[dict]) -> TopicScan:
     """Step 1: turn ~150 raw signals into the specific things people are talking about."""
     prompt = f"""Today is {date.today():%d %b %Y}. Below are this week's signals from AI news, Hacker News,
-Reddit, GitHub trending and Hugging Face trending.
+Reddit, Show HN, GitHub trending, Hugging Face trending and research papers.
 
 Find the TRENDING STORIES of the whole AI industry: the things people in AI are talking and
-arguing about this week. Think: big launches from major labs, a product or app going viral,
-huge funding rounds and valuations, rivalries (company X fires back at Y), lawsuits, bans and
-regulation, AI and jobs, chips, surprising research, an open model everyone is trying.
+arguing about this week. Favor what a developer can try TODAY: tools, plugins, skills and MCP
+servers for coding agents (Claude Code, Codex), repos a big company just open-sourced, new open
+models, guidance from the labs. Also report big launches, a product or app going viral and
+surprising research. Funding rounds, lawsuits, regulation, jobs and chips only when they are
+huge: nobody can build on them, so they make weak posts.
 
 ## Signals (id. [where it was seen] title (engagement))
 {UNTRUSTED_RULE}
@@ -260,12 +279,13 @@ Rules:
   product = an app, API or tool you can sign up for and try (handle = its name);
   paper = a research result with a claim you could test (handle = its title);
   news = nothing to touch (funding, lawsuit, hires, policy).
-- Viral GitHub repos and new models are among the best stories: always report them.
+- Viral GitHub repos and new models are among the best stories: always report them. Agent skills,
+  plugins, MCP servers and repos open-sourced by big companies: report each as its own github_repo topic.
 - Skip non-AI items, NSFW, face-swap and piracy.
 - Return the 9 biggest stories, biggest first. Keep every text field to one short sentence."""
     return llm.chat_json(
         "You are a sharp AI trend analyst. You only report what the evidence shows.",
-        prompt, TopicScan, max_tokens=4500, effort="low", role="scout")
+        prompt, TopicScan, max_tokens=3000, effort="low", role="scout")
 
 
 FORMATS = """Pick the format from the story's handle_type. The experiment is the post.

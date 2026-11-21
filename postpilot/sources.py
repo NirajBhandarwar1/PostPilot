@@ -29,7 +29,8 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) postpilot/0.3"
 RADAR_DAYS = float(env("RADAR_DAYS", "10"))   # viral things stay hot for 1-3 weeks
 AI_WORDS = re.compile(r"\b(AI|A\.I\.|LLM|GPT|model|models|agent|agents|Claude|Gemini|OpenAI|Anthropic|"
                       r"DeepSeek|Qwen|Llama|Mistral|Muse|Grok|Copilot|chatbot|neural|diffusion|"
-                      r"open[- ]source|open[- ]weight|inference|benchmark|AGI|robot)\b", re.I)
+                      r"open[- ]source|open[- ]weight|inference|benchmark|AGI|robot|MCP|Codex|coding agents?|"
+                      r"agent skills?)(?:s|\d[\w.]*)?\b", re.I)
 
 
 def _public_url(url: str) -> bool:
@@ -77,7 +78,7 @@ def _get(url: str, headers: dict | None = None) -> bytes:
 
 
 def _sig(kind, rank, title, url, engagement=0, detail=""):
-    return {"kind": kind, "rank": rank, "title": html.unescape(title).strip()[:110],
+    return {"kind": kind, "rank": rank, "title": " ".join(html.unescape(title).split())[:110],
             "url": url, "engagement": engagement, "detail": detail}
 
 
@@ -109,7 +110,7 @@ def github_trending() -> list[dict]:
 
 def reddit() -> list[dict]:
     out: list[dict] = []
-    for sub in ["singularity", "OpenAI", "artificial", "LocalLLaMA"]:
+    for sub in ["ClaudeAI", "LLMDevs", "MachineLearning", "LocalLLaMA"]:   # where builders talk, not hype
         root = None
         for attempt in range(2):
             try:
@@ -130,7 +131,8 @@ def reddit() -> list[dict]:
 
 
 HN_QUERIES = ["AI", "LLM", "GPT", "model", "agent", "OpenAI", "Anthropic", "Claude", "Gemini",
-              "DeepSeek", "Qwen", "open source model", "inference", "AI coding"]
+              "DeepSeek", "Qwen", "open source model", "inference", "AI coding", "Claude Code", "MCP", "Codex",
+              "open-sourced"]
 
 
 def hacker_news() -> list[dict]:
@@ -143,7 +145,7 @@ def hacker_news() -> list[dict]:
                + urllib.parse.quote(q) + f"&numericFilters=points>=80,created_at_i>{since}")
         try:
             for h in json.loads(_get(url)).get("hits", []):
-                if AI_WORDS.search(h.get("title") or "") or q.lower() in (h.get("title") or "").lower():
+                if AI_WORDS.search(h.get("title") or "") or re.search(rf"\b{re.escape(q)}(?:s|\d[\w.]*)?\b", h.get("title") or "", re.I):
                     hits[h["objectID"]] = h
         except Exception as e:
             log.warning("hn query %r failed: %s", q, e)
@@ -151,6 +153,63 @@ def hacker_news() -> list[dict]:
     return [_sig("Hacker News", i, h["title"],
                  h.get("url") or f"https://news.ycombinator.com/item?id={h['objectID']}",
                  h.get("points", 0), f"{h.get('points', 0)} points, {h.get('num_comments', 0)} comments")
+            for i, h in enumerate(ranked)]
+
+
+def hf_daily_papers() -> list[dict]:
+    """Hugging Face Daily Papers: the five most-upvoted research papers of the day (one request)."""
+    data = json.loads(_get("https://huggingface.co/api/daily_papers?limit=30"))
+    rows = []
+    for d in data if isinstance(data, list) else []:
+        p = d.get("paper") if isinstance(d, dict) and isinstance(d.get("paper"), dict) else d
+        if not isinstance(p, dict) or not p.get("id") or not (p.get("title") or d.get("title")):
+            continue
+        up = p.get("upvotes", d.get("upvotes", 0))
+        rows.append((up if isinstance(up, int) and not isinstance(up, bool) else 0, p["id"], p.get("title") or d["title"]))
+    rows.sort(key=lambda r: -r[0])
+    return [_sig("Paper", i, str(t), f"https://huggingface.co/papers/{pid}", up, f"{up} upvotes on HF Daily Papers")
+            for i, (up, pid, t) in enumerate(rows[:5])]
+
+
+def _hn_hits(url: str) -> list[dict]:
+    hits = json.loads(_get(url)).get("hits", [])
+    return [h for h in hits if isinstance(h, dict) and h.get("objectID") and h.get("title")] if isinstance(hits, list) else []
+
+
+def _hn_link(h: dict) -> str:
+    return h.get("url") or f"https://news.ycombinator.com/item?id={h['objectID']}"
+
+
+def show_hn() -> list[dict]:
+    """Show HN projects about AI with real upvotes: things people built and shipped (one request)."""
+    since = int(time.time() - min(RADAR_DAYS, 7) * 86400)
+    hits = _hn_hits("https://hn.algolia.com/api/v1/search?tags=show_hn&hitsPerPage=30"
+                    f"&numericFilters=points>=40,created_at_i>{since}")
+    hits = sorted((h for h in hits if AI_WORDS.search(h["title"])), key=lambda h: -(h.get("points") or 0))[:8]
+    return [_sig("Hacker News", i, h["title"], _hn_link(h), h.get("points") or 0,
+                 f"Show HN, {h.get('points') or 0} points, {h.get('num_comments') or 0} comments")
+            for i, h in enumerate(hits)]
+
+
+HN_LAB_QUERIES = ("anthropic.com", "engineering")      # two requests in total, never one per domain
+
+
+def hn_lab_posts() -> list[dict]:
+    """Stories whose link is a lab's own site or an engineering blog (the best how-to posts reach HN this way)."""
+    since = int(time.time() - min(RADAR_DAYS, 7) * 86400)
+    hits: dict[str, dict] = {}
+    for q in HN_LAB_QUERIES:
+        url = ("https://hn.algolia.com/api/v1/search?tags=story&hitsPerPage=20&restrictSearchableAttributes=url"
+               f"&query={urllib.parse.quote(q)}&numericFilters=points>=50,created_at_i>{since}")
+        try:
+            for h in _hn_hits(url):
+                if q != "engineering" or AI_WORDS.search(h["title"]):
+                    hits[h["objectID"]] = h
+        except Exception as e:
+            log.warning("hn lab query %r failed: %s", q, e)
+    ranked = sorted(hits.values(), key=lambda h: -(h.get("points") or 0))[:10]
+    return [_sig("HN lab post", i, h["title"], _hn_link(h), h.get("points") or 0,
+                 f"{h.get('points') or 0} points on HN, linked from a lab or engineering blog")
             for i, h in enumerate(ranked)]
 
 
@@ -173,6 +232,13 @@ NEWS_QUERIES = [
     "AI regulation OR lawsuit OR ban", "AI jobs OR layoffs OR hiring",
     "AI agents", "open-source AI model",
 ]
+# Engineering blogs of the companies that open-source tools people try (feeds checked 2026-11-18).
+ENG_BLOGS = {
+    "Cloudflare blog": "https://blog.cloudflare.com/rss/",
+    "GitHub blog": "https://github.blog/feed/",
+    "Meta Engineering": "https://engineering.fb.com/feed/",
+    "OpenAI news": "https://openai.com/news/rss.xml",
+}
 NEWS_FEEDS = {
     "TechCrunch": "https://techcrunch.com/category/artificial-intelligence/feed/",
     "The Verge": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
@@ -215,6 +281,17 @@ def news() -> list[dict]:
             if when >= cutoff and key not in seen:
                 seen.add(key)
                 out.append(_sig("News", len(out), title, link, 0, when.strftime("%d %b")))
+    for name, url in ENG_BLOGS.items():
+        try:
+            items = list(_feed_items(_get(url)))
+        except Exception as e:
+            log.warning("eng blog %s failed: %s", name, e)
+            continue
+        about_ai = [i for i in sorted(items, key=lambda i: i[2], reverse=True)
+                    if AI_WORDS.search(i[0]) or name == "OpenAI news"]
+        for title, link, when in about_ai[:2]:
+            if when >= cutoff:
+                out.append(_sig("Eng blog", len(out), f"{name}: {title}", link, 0, when.strftime("%d %b")))
     for name, url in NEWS_FEEDS.items():
         try:
             items = list(_feed_items(_get(url)))
@@ -227,16 +304,69 @@ def news() -> list[dict]:
     return out
 
 
-COLLECTORS = [hacker_news, techmeme, reddit, github_trending, hf_trending_models, news]
+AGENT_TOPICS = ("claude-code", "mcp-server", "agent-skills")
+WIDE_TOPICS = ("rag", "llm-evaluation", "ocr", "ai-engineering", "llm-inference")   # 30 days, 300+ stars, one repo each
+
+
+def github_agent_tools() -> list[dict]:
+    """New repos a developer can try today. Agent topics (14 days, 200+ stars, two repos each) plus wider
+    knowledge topics (30 days, 300+ stars, one repo each), most-starred first. One request per topic."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    headers = {"Accept": "application/vnd.github+json"}
+    if settings.github_token:
+        headers["Authorization"] = f"Bearer {settings.github_token}"
+    plan = [(t, 14, 200, 2) for t in AGENT_TOPICS] + [(t, 30, 300, 1) for t in WIDE_TOPICS]
+    for topic, days, min_stars, take in plan:
+        since = time.strftime("%Y-%m-%d", time.gmtime(time.time() - days * 86400))
+        stars = f"+stars:>{min_stars}" if days == 30 else ""
+        url = (f"https://api.github.com/search/repositories?q=topic:{topic}+created:>{since}{stars}"
+               "&sort=stars&order=desc&per_page=5")
+        try:
+            repos = json.loads(_get(url, headers)).get("items", [])
+        except urllib.error.HTTPError as e:
+            log.warning("github %s search failed: HTTP %s", topic, e.code)
+            if e.code in (403, 429):      # rate limited: the remaining topics would fail the same way
+                break
+            continue
+        except Exception as e:
+            log.warning("github %s search failed: %s", topic, e)
+            continue
+        got = 0
+        for r in repos if isinstance(repos, list) else []:
+            desc = (r.get("description") or "").strip()
+            if r["full_name"] in seen or not desc or r.get("stargazers_count", 0) < min_stars:
+                continue
+            seen.add(r["full_name"])
+            out.append(_sig("GitHub new tools", len(out), f"{r['full_name']}: {desc}", r["html_url"],
+                            r["stargazers_count"], f"{topic}, {r['stargazers_count']:,} stars"))
+            got += 1
+            if got >= take:
+                break
+    return out
+
+
+COLLECTORS = [hn_lab_posts, hacker_news, show_hn, techmeme, reddit, github_trending, github_agent_tools,
+              hf_trending_models, hf_daily_papers, news]
+
+
+HN_KINDS = ("Hacker News", "HN lab post")
 
 
 def collect(days: float | None = None) -> list[dict]:
     items = []
+    seen_hn: set[str] = set()      # one HN story is one signal, whichever HN source found it first
     for fn in COLLECTORS:
         try:
             got = fn()
             log.info("%s: %d signals", fn.__name__, len(got))
-            items.extend(got)
+            for s in got:
+                if s["kind"] in HN_KINDS:
+                    key = (s.get("url") or "").rstrip("/").lower()
+                    if key in seen_hn:
+                        continue
+                    seen_hn.add(key)
+                items.append(s)
         except Exception as e:  # network hiccup, rate limit, site change
             log.warning("%s failed: %s", fn.__name__, e)
     return items
