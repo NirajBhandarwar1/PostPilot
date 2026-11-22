@@ -225,12 +225,12 @@ def techmeme() -> list[dict]:
 
 
 # Broad AI-industry searches: the stories people in AI are actually talking about.
+# What a developer can try today beats money and policy news: the posts that win are about tools, repos and releases
+# (eng review of the first 15 examples), so the finance, regulation and jobs searches are gone.
 NEWS_QUERIES = [
     "OpenAI", "Anthropic OR Claude", "Google Gemini OR DeepMind", "Meta AI OR Microsoft AI OR Apple AI",
-    "Nvidia AI chips", "AI startup raises OR valuation OR acquisition",
     "AI viral OR \"went viral\" OR backlash", "AI model launch OR unveils OR releases",
-    "AI regulation OR lawsuit OR ban", "AI jobs OR layoffs OR hiring",
-    "AI agents", "open-source AI model",
+    "AI agents", "open-source AI model", "Claude Code OR Codex OR MCP", "open-sourced AI tool",
 ]
 # Engineering blogs of the companies that open-source tools people try (feeds checked 2026-11-18).
 ENG_BLOGS = {
@@ -276,7 +276,7 @@ def news() -> list[dict]:
         except Exception as e:
             log.warning("google news failed: %s", e)
             continue
-        for title, link, when in items[:5]:
+        for title, link, when in items[:2]:
             key = title.lower()[:60]
             if when >= cutoff and key not in seen:
                 seen.add(key)

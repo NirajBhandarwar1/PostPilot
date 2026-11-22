@@ -6,6 +6,38 @@ from email.utils import formatdate
 from postpilot import brain, examples, pipeline, ranking, sources
 from postpilot.evals import runner
 
+# ---------- ranking ----------
+
+
+def test_a_big_org_repo_for_coding_agents_gets_both_bonuses():
+    t = {"handle_type": "github_repo", "handle": "cloudflare/security-audit-skill", "handle_facts": "a skill",
+         "heat": 12.0}
+    assert ranking.builder_bonus(t) == 9.0
+
+
+def test_each_bonus_is_separate_and_only_repos_get_them():
+    repo = {"handle_type": "github_repo", "heat": 12.0}
+    assert ranking.builder_bonus({**repo, "handle": "randomdev/cool-plugin"}) == 4.0
+    assert ranking.builder_bonus({**repo, "handle": "Google/some-library"}) == 5.0           # case-insensitive
+    assert ranking.builder_bonus({**repo, "handle": "randomdev/notes"}) == 0.0
+    assert ranking.builder_bonus({**repo, "handle_type": "news", "handle": "google/skills", "name": "plugin"}) == 0.0
+    assert ranking.builder_bonus({}) == 0.0
+
+
+def test_no_bonus_without_real_attention_and_the_models_words_do_not_count():
+    weak = {"handle_type": "github_repo", "handle": "cloudflare/security-audit-skill", "heat": 6.0}
+    assert ranking.builder_bonus(weak) == 0.0                                                  # a star-farmed repo gets nothing
+    model_label = {"handle_type": "github_repo", "handle": "randomdev/notes", "heat": 12.0, "name": "a coding agent plugin"}
+    assert ranking.builder_bonus(model_label) == 0.0                                           # only GitHub's own words
+    assert ranking.builder_bonus({"handle_type": "github_repo", "handle": "randomdev/cli-tool", "heat": 12.0}) == 0.0
+
+
+def test_the_bonus_is_small_next_to_real_attention():
+    hn = [{"kind": "Hacker News", "rank": 0, "engagement": 1600, "detail": "d"}]
+    assert ranking.builder_bonus({"handle_type": "github_repo", "handle": "google/x-plugin", "heat": 12.0}) <= 9
+    assert ranking.heat({"signal_ids": [0]}, hn)[0] > 15          # a 1,600-point thread alone beats the largest bonus
+
+
 def test_new_signal_kinds_score_but_stay_modest():
     def one(kind, eng):
         return ranking.heat({"signal_ids": [0]}, [{"kind": kind, "rank": 0, "engagement": eng, "detail": "d"}])[0]
@@ -31,6 +63,13 @@ def test_the_radar_asks_about_coding_agents():
     for q in ("Claude Code", "MCP", "Codex", "open-sourced"):
         assert q in sources.HN_QUERIES
     assert sources.AI_WORDS.search("A new MCP server for Codex") and not sources.AI_WORDS.search("Paper Airplanes")
+
+
+def test_money_and_policy_searches_are_gone_and_tool_searches_are_in():
+    joined = " ".join(sources.NEWS_QUERIES)
+    for gone in ("regulation", "layoffs", "valuation", "Nvidia AI chips"):
+        assert gone not in joined
+    assert "Claude Code OR Codex OR MCP" in sources.NEWS_QUERIES
 
 
 def test_new_coding_agent_repos_become_signals_two_per_topic(monkeypatch):

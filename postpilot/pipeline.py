@@ -155,14 +155,19 @@ def generate_batch(signals: list[dict], history: list, voice: str, cat: factgate
     topics = [t.model_dump() for t in brain.find_topics(signals).topics]
     for t in topics:
         t["link_ids"] = factgate.filter_links(t, signals)   # sources that really name the topic
-        t["heat"], t["heat_where"] = ranking.heat(t, signals, t["link_ids"])
+        raw_heat, t["heat_where"] = ranking.heat(t, signals, t["link_ids"])
+        adj = ranking.content_adjust(t, signals, t["link_ids"], raw_heat)
+        t["heat"] = max(raw_heat + adj, 0.0)
+        if adj:
+            t["heat_where"] += f" | adj {adj:+.0f}"
         t["evidence"] = [f"[{signals[i]['kind']}] {signals[i]['title']} ({signals[i]['detail']})"
                          for i in t["link_ids"][:6]]
     # Measured heat leads; the model's opinion (builder relevance, buzz) is capped (eng review O3).
     for t in topics:
         _check_handle(t, gh_lookup)
+        t["builder_bonus"] = ranking.builder_bonus(t)            # after _check_handle: it sets the real repo facts
         t["score"] = (t["heat"] + min(ranking.MODEL_SCORE_CAP, t.get("builder_relevance", 5) + 0.5 * t.get("buzz", 5))
-                      + ranking.HANDLE_BONUS.get(t.get("handle_type", "news"), 0.0))
+                      + ranking.HANDLE_BONUS.get(t.get("handle_type", "news"), 0.0) + t["builder_bonus"])
     topics.sort(key=lambda t: -t["score"])
     for t in topics:
         log.info("topic %-55s heat %4.0f buzz %2d links %d  %s", t["name"][:55], t["heat"],

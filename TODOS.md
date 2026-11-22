@@ -32,6 +32,19 @@
 **Priority:** P2
 **Depends on:** at least 10 posts published and their numbers recorded
 
+### Build ideas for your own posts (from the 2026-11 example review)
+
+Six one-hour builds, each free to run and each giving real numbers to post. Do them in this order; the first is the most natural because it measures PostPilot itself.
+
+1. **Small-or-frontier map of PostPilot.** For each pipeline step, latency and quality with a small local model against a free large model.
+2. **Run-it-10-times eval.** One agent task on two free models in promptfoo; a single run's pass rate next to the spread over 10 runs.
+3. **Retrieval regression check.** 20 golden questions, recall@5 before and after a chunking change, with a test that fails on a drop.
+4. **Stale-approval guard.** Re-check a request's version between approval and running it; show a stale approval makes no changes.
+5. **Revocation test.** Revoke a user in SQLite, then check whether the agent's own service identity can still read their rows.
+6. **Tool-call firewall in about 100 lines.** Role checks plus an approval step, with a table of blocked calls.
+
+**Why:** these topics kept coming back in the posts that teach something (agent permissions, evals run more than once, small models next to large ones). **Effort:** S each. **Priority:** P2.
+
 ## Release
 
 ### Prove CI, Docker and the first release
